@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CalendarDays, Leaf, RouteIcon as Road, Wrench, User, LogOut, LayoutDashboard } from "lucide-react"
+import { CalendarDays, Leaf, Bold as Road, Wrench, User, LogOut, LayoutDashboard } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -24,6 +24,8 @@ import {
   DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog"
+import AdminDashboard from "@/components/admin-dashboard"
+import { AutoEstradasSelect } from "@/components/auto-estradas-select"
 
 // Tipagem para o intervalo de datas
 interface DateRange {
@@ -63,9 +65,10 @@ export default function ServiceSchedulerApp() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [loginData, setLoginData] = useState({ email: "", password: "" })
   const [user, setUser] = useState({ name: "", email: "" })
-  const [userRole, setUserRole] = useState<"prestador" | "go" | "cco" | null>(null)
+  const [userRole, setUserRole] = useState<"prestador" | "go" | "cco" | "admin" | null>(null)
   const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined)
   const [dailyDetails, setDailyDetails] = useState<{ [dateString: string]: DailyDetail }>({})
+  const [isUrgente, setIsUrgente] = useState(false)
 
   const [vegetalNumero, setVegetalNumero] = useState("")
   const [vegetalDescricao, setVegetalDescricao] = useState("")
@@ -74,6 +77,9 @@ export default function ServiceSchedulerApp() {
   const [blockedDates, setBlockedDates] = useState<Set<string>>(new Set())
   const [editingPlanId, setEditingPlanId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState("vegetal")
+  const [autoEstrada, setAutoEstrada] = useState("")
+  const [kmInicial, setKmInicial] = useState("")
+  const [kmFinal, setKmFinal] = useState("")
 
   // Novo estado para o pop-up de notificação
   const [notificationDialog, setNotificationDialog] = useState<{
@@ -151,6 +157,11 @@ export default function ServiceSchedulerApp() {
       setUserRole("cco")
       setIsLoggedIn(true)
       setActiveTab("dashboard-cco")
+    } else if (loginData.email === "admin@teste.pt") {
+      setUser({ name: "Administrador", email: loginData.email })
+      setUserRole("admin")
+      setIsLoggedIn(true)
+      setActiveTab("admin-dashboard")
     } else {
       alert("Email ou senha inválidos.")
     }
@@ -167,6 +178,10 @@ export default function ServiceSchedulerApp() {
     setVegetalDescricao("")
     setEditingPlanId(null)
     setActiveTab("vegetal")
+    setAutoEstrada("")
+    setKmInicial("")
+    setKmFinal("")
+    setIsUrgente(false)
   }
 
   const getDatesInRange = (startDate?: Date, endDate?: Date): Date[] => {
@@ -224,6 +239,10 @@ export default function ServiceSchedulerApp() {
     setDateRange(undefined)
     setDailyDetails({})
     setEditingPlanId(null)
+    setAutoEstrada("")
+    setKmInicial("")
+    setKmFinal("")
+    setIsUrgente(false)
   }
 
   const handleSubmitOrUpdateVegetalPlan = () => {
@@ -459,6 +478,11 @@ export default function ServiceSchedulerApp() {
     )
   }
 
+  // Se for admin, mostrar apenas o dashboard de admin
+  if (userRole === "admin") {
+    return <AdminDashboard />
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -493,194 +517,346 @@ export default function ServiceSchedulerApp() {
         </div>
 
         {userRole === "prestador" && (
-          <Tabs defaultValue={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="vegetal" className="flex items-center space-x-2">
-                <Leaf className="w-4 h-4" />
-                <span>Manutenção Vegetal</span>
-              </TabsTrigger>
-              <TabsTrigger value="pavimento" className="flex items-center space-x-2">
-                <Road className="w-4 h-4" />
-                <span>Beneficiação de Pavimento</span>
-              </TabsTrigger>
-              <TabsTrigger value="geral" className="flex items-center space-x-2">
-                <Wrench className="w-4 h-4" />
-                <span>Manutenção Geral</span>
-              </TabsTrigger>
-            </TabsList>
-
-            {/* Manutenção Vegetal */}
-            <TabsContent value="vegetal">
-              <Card>
-                <CardHeader>
+          <Card>
+            <CardHeader>
+              <div className="flex justify-between items-start">
+                <div>
                   <CardTitle className="flex items-center space-x-2">
                     <Leaf className="w-5 h-5 text-green-600" />
                     <span>Manutenção Vegetal</span>
                   </CardTitle>
                   <CardDescription>Serviços de jardinagem, poda e manutenção de áreas verdes</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Mostrar comentário do GO se estiver editando um plano rejeitado */}
-                  {editingPlanId && getEditingPlan()?.comentarioGO && (
-                    <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                      <Label className="text-sm font-semibold text-red-800 mb-2 block">
-                        Comentário do Gestor de Operações:
-                      </Label>
-                      <p className="text-sm text-red-700">{getEditingPlan()?.comentarioGO}</p>
-                    </div>
-                  )}
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Label htmlFor="urgente-checkbox" className="text-sm font-medium">
+                    Urgente?
+                  </Label>
+                  <Checkbox id="urgente-checkbox" checked={isUrgente} onCheckedChange={setIsUrgente} />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <AutoEstradasSelect
+                    value={autoEstrada}
+                    onValueChange={setAutoEstrada}
+                    label="Auto Estrada"
+                    placeholder="Selecione a Auto Estrada"
+                  />
+                </div>
 
-                  <div className="space-y-4">
+                {/* Novos campos de Km inicial e final */}
+                {autoEstrada && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <Label htmlFor="vegetal-numero">Nº</Label>
+                      <Label htmlFor="km-inicial">Km Inicial</Label>
                       <Input
-                        id="vegetal-numero"
-                        placeholder="Ex: MV-001"
-                        value={vegetalNumero}
-                        onChange={(e) => setVegetalNumero(e.target.value)}
+                        id="km-inicial"
+                        type="number"
+                        placeholder="Ex: 100"
+                        value={kmInicial}
+                        onChange={(e) => setKmInicial(e.target.value)}
                       />
                     </div>
-
                     <div>
-                      <Label htmlFor="vegetal-descricao">Descrição geral da atividade</Label>
-                      <Textarea
-                        id="vegetal-descricao"
-                        placeholder="Descreva a atividade de manutenção vegetal a ser realizada..."
-                        rows={4}
-                        value={vegetalDescricao}
-                        onChange={(e) => setVegetalDescricao(e.target.value)}
+                      <Label htmlFor="km-final">Km Final</Label>
+                      <Input
+                        id="km-final"
+                        type="number"
+                        placeholder="Ex: 150"
+                        value={kmFinal}
+                        onChange={(e) => setKmFinal(e.target.value)}
                       />
                     </div>
+                  </div>
+                )}
 
-                    <div>
-                      <Label>Data</Label>
-                      <Calendar
-                        initialFocus
-                        mode="range"
-                        defaultMonth={dateRange?.from}
-                        selected={dateRange}
-                        onSelect={setDateRange}
-                        numberOfMonths={2}
-                        locale={ptBR}
-                        className="rounded-md border shadow"
-                        disabled={disableBlockedDates}
-                      />
-                      <div className="mt-3 text-xs text-gray-500 text-center">
-                        {datesToRender.length === 0 && "Selecione um período no calendário"}
-                        {datesToRender.length === 1 && "1 dia selecionado"}
-                        {datesToRender.length > 1 && `${datesToRender.length} dias selecionados`}
-                      </div>
+                {/* Mostrar diferença de Km's se ambos estiverem preenchidos */}
+                {autoEstrada && kmInicial && kmFinal && (
+                  <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg">
+                    {(() => {
+                      const inicial = Number.parseFloat(kmInicial)
+                      const final = Number.parseFloat(kmFinal)
+                      if (!isNaN(inicial) && !isNaN(final)) {
+                        const diferenca = final - inicial
+                        if (diferenca >= 0) {
+                          return `📏 Extensão do trabalho: ${diferenca} Km (de ${inicial} Km até ${final} Km)`
+                        } else {
+                          return <span className="text-red-600">⚠️ Km final deve ser maior que o Km inicial</span>
+                        }
+                      }
+                      return null
+                    })()}
+                  </div>
+                )}
+
+                {/* Mostrar comentário do GO se estiver editando um plano rejeitado */}
+                {editingPlanId && getEditingPlan()?.comentarioGO && (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <Label className="text-sm font-semibold text-red-800 mb-2 block">
+                      Comentário do Gestor de Operações:
+                    </Label>
+                    <p className="text-sm text-red-700">{getEditingPlan()?.comentarioGO}</p>
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="vegetal-numero">Sublanço</Label>
+                    <Input
+                      id="vegetal-numero"
+                      placeholder="Ex: MV-001"
+                      value={vegetalNumero}
+                      onChange={(e) => setVegetalNumero(e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="vegetal-tipo-trabalho">Plano de Trabalho</Label>
+                    <Select value={vegetalDescricao} onValueChange={setVegetalDescricao}>
+                      <SelectTrigger id="vegetal-tipo-trabalho">
+                        <SelectValue placeholder="Selecione o plano de trabalho" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="opcao1">Opção 1 (a definir)</SelectItem>
+                        <SelectItem value="opcao2">Opção 2 (a definir)</SelectItem>
+                        <SelectItem value="opcao3">Opção 3 (a definir)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label>Data</Label>
+                    <Calendar
+                      initialFocus
+                      mode="range"
+                      defaultMonth={dateRange?.from}
+                      selected={dateRange}
+                      onSelect={setDateRange}
+                      numberOfMonths={2}
+                      locale={ptBR}
+                      className="rounded-md border shadow"
+                      disabled={disableBlockedDates}
+                    />
+                    <div className="mt-3 text-xs text-gray-500 text-center">
+                      {datesToRender.length === 0 && "Selecione um período no calendário"}
+                      {datesToRender.length === 1 && "1 dia selecionado"}
+                      {datesToRender.length > 1 && `${datesToRender.length} dias selecionados`}
                     </div>
+                  </div>
 
-                    {datesToRender.length >= 1 && (
-                      <div className="mt-4 border rounded-lg p-4 bg-blue-50">
-                        <Label className="text-sm font-medium mb-3 block">Detalhes por Dia Selecionado</Label>
-                        <div className="space-y-4">
-                          {datesToRender.map((date) => {
-                            const dateString = format(date, "yyyy-MM-dd")
-                            const details = dailyDetails[dateString] || {
-                              timeSlot: "",
-                              perfilTipo: "",
-                              tipoTrabalho: [],
-                              kmsInicio: "",
-                              kmsFim: "",
-                              sentido: [],
-                              vias: [],
-                              esqRef: "",
-                              outrosLocais: [],
-                              responsavelNome: "",
-                              responsavelContacto: "",
-                            }
+                  {datesToRender.length >= 1 && (
+                    <div className="mt-4 border rounded-lg p-4 bg-blue-50">
+                      <Label className="text-sm font-medium mb-3 block">Detalhes por Dia Selecionado</Label>
+                      <div className="space-y-4">
+                        {datesToRender.map((date) => {
+                          const dateString = format(date, "yyyy-MM-dd")
+                          const details = dailyDetails[dateString] || {
+                            timeSlot: "",
+                            perfilTipo: "",
+                            tipoTrabalho: [],
+                            kmsInicio: "",
+                            kmsFim: "",
+                            sentido: [],
+                            vias: [],
+                            esqRef: "",
+                            outrosLocais: [],
+                            responsavelNome: "",
+                            responsavelContacto: "",
+                          }
 
-                            return (
-                              <div key={dateString} className="bg-white p-4 rounded border space-y-4">
-                                <div className="flex items-center justify-between mb-3">
-                                  <span className="font-medium text-sm">{format(date, "PPP", { locale: ptBR })}</span>
+                          return (
+                            <div key={dateString} className="bg-white p-4 rounded border space-y-4">
+                              <div className="flex items-center justify-between mb-3">
+                                <span className="font-medium text-sm">{format(date, "PPP", { locale: ptBR })}</span>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                  <Label className="text-xs text-gray-600 mb-1 block">Horário de Início</Label>
+                                  <Select
+                                    value={details.timeSlot?.split("-")[0] || ""}
+                                    onValueChange={(value) => {
+                                      const currentEnd = details.timeSlot?.split("-")[1] || ""
+                                      handleDailyDetailChange(
+                                        dateString,
+                                        "timeSlot",
+                                        currentEnd ? `${value}-${currentEnd}` : value,
+                                      )
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-full">
+                                      <SelectValue placeholder="Início" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {Array.from({ length: 21 }, (_, i) => {
+                                        const hour = Math.floor(i / 2) + 8
+                                        const minute = (i % 2) * 30
+                                        const timeString = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`
+                                        return (
+                                          <SelectItem key={timeString} value={timeString}>
+                                            {timeString}
+                                          </SelectItem>
+                                        )
+                                      })}
+                                    </SelectContent>
+                                  </Select>
                                 </div>
 
+                                <div>
+                                  <Label className="text-xs text-gray-600 mb-1 block">Horário de Fim</Label>
+                                  <Select
+                                    value={details.timeSlot?.split("-")[1] || ""}
+                                    onValueChange={(value) => {
+                                      const currentStart = details.timeSlot?.split("-")[0] || ""
+                                      handleDailyDetailChange(
+                                        dateString,
+                                        "timeSlot",
+                                        currentStart ? `${currentStart}-${value}` : value,
+                                      )
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-full">
+                                      <SelectValue placeholder="Fim" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {Array.from({ length: 21 }, (_, i) => {
+                                        const hour = Math.floor(i / 2) + 8
+                                        const minute = (i % 2) * 30 + 30
+                                        const adjustedHour = minute >= 60 ? hour + 1 : hour
+                                        const adjustedMinute = minute >= 60 ? minute - 60 : minute
+                                        const timeString = `${adjustedHour.toString().padStart(2, "0")}:${adjustedMinute.toString().padStart(2, "0")}`
+                                        return (
+                                          <SelectItem key={timeString} value={timeString}>
+                                            {timeString}
+                                          </SelectItem>
+                                        )
+                                      })}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+
+                              {details.timeSlot?.includes("-") && details.timeSlot?.split("-").length === 2 && (
+                                <div className="mt-2 text-xs text-gray-500">
+                                  {(() => {
+                                    const [start, end] = details.timeSlot.split("-")
+                                    if (start && end) {
+                                      const startTime = new Date(`2000-01-01 ${start}:00`)
+                                      const endTime = new Date(`2000-01-01 ${end}:00`)
+                                      const diffMs = endTime.getTime() - startTime.getTime()
+                                      const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+                                      const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
+
+                                      if (diffMs > 0) {
+                                        return `Duração: ${diffHours}h${diffMinutes > 0 ? ` ${diffMinutes}min` : ""}`
+                                      } else {
+                                        return (
+                                          <span className="text-red-500">
+                                            ⚠️ Horário de fim deve ser posterior ao início
+                                          </span>
+                                        )
+                                      }
+                                    }
+                                    return null
+                                  })()}
+                                </div>
+                              )}
+
+                              <div>
+                                <Label className="text-xs text-gray-600 mb-1 block" htmlFor={`perfil-${dateString}`}>
+                                  Perfil transversal tipo
+                                </Label>
+                                <Select
+                                  value={details.perfilTipo || ""}
+                                  onValueChange={(value) => handleDailyDetailChange(dateString, "perfilTipo", value)}
+                                >
+                                  <SelectTrigger id={`perfil-${dateString}`} className="w-full">
+                                    <SelectValue placeholder="Selecione o perfil" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="2x2">2x2</SelectItem>
+                                    <SelectItem value="3x3">3x3</SelectItem>
+                                    <SelectItem value="4x4">4x4</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div>
+                                <Label className="text-xs text-gray-600 mb-1 block">Tipos de trabalho</Label>
+                                <div className="flex items-center space-x-4">
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`trabalho-fixos-${dateString}`}
+                                      checked={details.tipoTrabalho?.includes("fixos")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "tipoTrabalho", checked, "fixos")
+                                      }
+                                    />
+                                    <Label htmlFor={`trabalho-fixos-${dateString}`}>Fixos</Label>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`trabalho-moveis-${dateString}`}
+                                      checked={details.tipoTrabalho?.includes("moveis")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "tipoTrabalho", checked, "moveis")
+                                      }
+                                    />
+                                    <Label htmlFor={`trabalho-moveis-${dateString}`}>Móveis</Label>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Km's por dia */}
+                              <div>
+                                <Label className="text-xs text-gray-600 mb-1 block">Km's</Label>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                   <div>
-                                    <Label className="text-xs text-gray-600 mb-1 block">Horário de Início</Label>
-                                    <Select
-                                      value={details.timeSlot?.split("-")[0] || ""}
-                                      onValueChange={(value) => {
-                                        const currentEnd = details.timeSlot?.split("-")[1] || ""
-                                        handleDailyDetailChange(
-                                          dateString,
-                                          "timeSlot",
-                                          currentEnd ? `${value}-${currentEnd}` : value,
-                                        )
-                                      }}
+                                    <Label
+                                      className="text-xs text-gray-600 mb-1 block"
+                                      htmlFor={`kms-inicio-${dateString}`}
                                     >
-                                      <SelectTrigger className="w-full">
-                                        <SelectValue placeholder="Início" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        {Array.from({ length: 21 }, (_, i) => {
-                                          const hour = Math.floor(i / 2) + 8
-                                          const minute = (i % 2) * 30
-                                          const timeString = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`
-                                          return (
-                                            <SelectItem key={timeString} value={timeString}>
-                                              {timeString}
-                                            </SelectItem>
-                                          )
-                                        })}
-                                      </SelectContent>
-                                    </Select>
+                                      Início (Km)
+                                    </Label>
+                                    <Input
+                                      id={`kms-inicio-${dateString}`}
+                                      type="number"
+                                      placeholder="Ex: 100"
+                                      value={details.kmsInicio || ""}
+                                      onChange={(e) => handleDailyDetailChange(dateString, "kmsInicio", e.target.value)}
+                                    />
                                   </div>
-
                                   <div>
-                                    <Label className="text-xs text-gray-600 mb-1 block">Horário de Fim</Label>
-                                    <Select
-                                      value={details.timeSlot?.split("-")[1] || ""}
-                                      onValueChange={(value) => {
-                                        const currentStart = details.timeSlot?.split("-")[0] || ""
-                                        handleDailyDetailChange(
-                                          dateString,
-                                          "timeSlot",
-                                          currentStart ? `${currentStart}-${value}` : value,
-                                        )
-                                      }}
+                                    <Label
+                                      className="text-xs text-gray-600 mb-1 block"
+                                      htmlFor={`kms-fim-${dateString}`}
                                     >
-                                      <SelectTrigger className="w-full">
-                                        <SelectValue placeholder="Fim" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        {Array.from({ length: 21 }, (_, i) => {
-                                          const hour = Math.floor(i / 2) + 8
-                                          const minute = (i % 2) * 30 + 30
-                                          const adjustedHour = minute >= 60 ? hour + 1 : hour
-                                          const adjustedMinute = minute >= 60 ? minute - 60 : minute
-                                          const timeString = `${adjustedHour.toString().padStart(2, "0")}:${adjustedMinute.toString().padStart(2, "0")}`
-                                          return (
-                                            <SelectItem key={timeString} value={timeString}>
-                                              {timeString}
-                                            </SelectItem>
-                                          )
-                                        })}
-                                      </SelectContent>
-                                    </Select>
+                                      Fim (Km)
+                                    </Label>
+                                    <Input
+                                      id={`kms-fim-${dateString}`}
+                                      type="number"
+                                      placeholder="Ex: 150"
+                                      value={details.kmsFim || ""}
+                                      onChange={(e) => handleDailyDetailChange(dateString, "kmsFim", e.target.value)}
+                                    />
                                   </div>
                                 </div>
-
-                                {details.timeSlot?.includes("-") && details.timeSlot?.split("-").length === 2 && (
+                                {details.kmsInicio && details.kmsFim && (
                                   <div className="mt-2 text-xs text-gray-500">
                                     {(() => {
-                                      const [start, end] = details.timeSlot.split("-")
-                                      if (start && end) {
-                                        const startTime = new Date(`2000-01-01 ${start}:00`)
-                                        const endTime = new Date(`2000-01-01 ${end}:00`)
-                                        const diffMs = endTime.getTime() - startTime.getTime()
-                                        const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-                                        const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
-
-                                        if (diffMs > 0) {
-                                          return `Duração: ${diffHours}h${diffMinutes > 0 ? ` ${diffMinutes}min` : ""}`
+                                      const inicio = Number.parseFloat(details.kmsInicio)
+                                      const fim = Number.parseFloat(details.kmsFim)
+                                      if (!isNaN(inicio) && !isNaN(fim)) {
+                                        const diffKms = fim - inicio
+                                        if (diffKms >= 0) {
+                                          return `Km's Percorridos: ${diffKms} Km`
                                         } else {
                                           return (
                                             <span className="text-red-500">
-                                              ⚠️ Horário de fim deve ser posterior ao início
+                                              ⚠️ Km final deve ser maior ou igual ao inicial
                                             </span>
                                           )
                                         }
@@ -689,527 +865,226 @@ export default function ServiceSchedulerApp() {
                                     })()}
                                   </div>
                                 )}
+                              </div>
 
-                                <div>
-                                  <Label className="text-xs text-gray-600 mb-1 block" htmlFor={`perfil-${dateString}`}>
-                                    Perfil transversal tipo
-                                  </Label>
-                                  <Select
-                                    value={details.perfilTipo || ""}
-                                    onValueChange={(value) => handleDailyDetailChange(dateString, "perfilTipo", value)}
-                                  >
-                                    <SelectTrigger id={`perfil-${dateString}`} className="w-full">
-                                      <SelectValue placeholder="Selecione o perfil" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="2x2">2x2</SelectItem>
-                                      <SelectItem value="3x3">3x3</SelectItem>
-                                      <SelectItem value="4x4">4x4</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-
-                                <div>
-                                  <Label className="text-xs text-gray-600 mb-1 block">Tipos de trabalho</Label>
-                                  <div className="flex items-center space-x-4">
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`trabalho-fixos-${dateString}`}
-                                        checked={details.tipoTrabalho?.includes("fixos")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "tipoTrabalho", checked, "fixos")
-                                        }
-                                      />
-                                      <Label htmlFor={`trabalho-fixos-${dateString}`}>Fixos</Label>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`trabalho-moveis-${dateString}`}
-                                        checked={details.tipoTrabalho?.includes("moveis")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "tipoTrabalho", checked, "moveis")
-                                        }
-                                      />
-                                      <Label htmlFor={`trabalho-moveis-${dateString}`}>Móveis</Label>
-                                    </div>
+                              {/* Sentido por dia (Checkbox) */}
+                              <div>
+                                <Label className="text-xs text-gray-600 mb-1 block">Sentido</Label>
+                                <div className="flex items-center space-x-4">
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`sentido-ns-${dateString}`}
+                                      checked={details.sentido?.includes("N/S")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "sentido", checked, "N/S")
+                                      }
+                                    />
+                                    <Label htmlFor={`sentido-ns-${dateString}`}>N/S</Label>
                                   </div>
-                                </div>
-
-                                {/* Km's por dia */}
-                                <div>
-                                  <Label className="text-xs text-gray-600 mb-1 block">Km's</Label>
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                      <Label
-                                        className="text-xs text-gray-600 mb-1 block"
-                                        htmlFor={`kms-inicio-${dateString}`}
-                                      >
-                                        Início (Km)
-                                      </Label>
-                                      <Input
-                                        id={`kms-inicio-${dateString}`}
-                                        type="number"
-                                        placeholder="Ex: 100"
-                                        value={details.kmsInicio || ""}
-                                        onChange={(e) =>
-                                          handleDailyDetailChange(dateString, "kmsInicio", e.target.value)
-                                        }
-                                      />
-                                    </div>
-                                    <div>
-                                      <Label
-                                        className="text-xs text-gray-600 mb-1 block"
-                                        htmlFor={`kms-fim-${dateString}`}
-                                      >
-                                        Fim (Km)
-                                      </Label>
-                                      <Input
-                                        id={`kms-fim-${dateString}`}
-                                        type="number"
-                                        placeholder="Ex: 150"
-                                        value={details.kmsFim || ""}
-                                        onChange={(e) => handleDailyDetailChange(dateString, "kmsFim", e.target.value)}
-                                      />
-                                    </div>
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`sentido-sn-${dateString}`}
+                                      checked={details.sentido?.includes("S/N")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "sentido", checked, "S/N")
+                                      }
+                                    />
+                                    <Label htmlFor={`sentido-sn-${dateString}`}>S/N</Label>
                                   </div>
-                                  {details.kmsInicio && details.kmsFim && (
-                                    <div className="mt-2 text-xs text-gray-500">
-                                      {(() => {
-                                        const inicio = Number.parseFloat(details.kmsInicio)
-                                        const fim = Number.parseFloat(details.kmsFim)
-                                        if (!isNaN(inicio) && !isNaN(fim)) {
-                                          const diffKms = fim - inicio
-                                          if (diffKms >= 0) {
-                                            return `Km's Percorridos: ${diffKms} Km`
-                                          } else {
-                                            return (
-                                              <span className="text-red-500">
-                                                ⚠️ Km final deve ser maior ou igual ao inicial
-                                              </span>
-                                            )
-                                          }
-                                        }
-                                        return null
-                                      })()}
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* Sentido por dia (Checkbox) */}
-                                <div>
-                                  <Label className="text-xs text-gray-600 mb-1 block">Sentido</Label>
-                                  <div className="flex items-center space-x-4">
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`sentido-ns-${dateString}`}
-                                        checked={details.sentido?.includes("N/S")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "sentido", checked, "N/S")
-                                        }
-                                      />
-                                      <Label htmlFor={`sentido-ns-${dateString}`}>N/S</Label>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`sentido-sn-${dateString}`}
-                                        checked={details.sentido?.includes("S/N")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "sentido", checked, "S/N")
-                                        }
-                                      />
-                                      <Label htmlFor={`sentido-sn-${dateString}`}>S/N</Label>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`sentido-ambos-${dateString}`}
-                                        checked={details.sentido?.includes("Ambos")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "sentido", checked, "Ambos")
-                                        }
-                                      />
-                                      <Label htmlFor={`sentido-ambos-${dateString}`}>Ambos</Label>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* Vias por dia (Checkbox) */}
-                                <div>
-                                  <Label className="text-xs text-gray-600 mb-1 block">Vias</Label>
-                                  <div className="flex flex-wrap gap-x-4 gap-y-2">
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`vias-direita-${dateString}`}
-                                        checked={details.vias?.includes("Direita")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "vias", checked, "Direita")
-                                        }
-                                      />
-                                      <Label htmlFor={`vias-direita-${dateString}`}>Direita</Label>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`vias-esquerda-${dateString}`}
-                                        checked={details.vias?.includes("Esquerda")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "vias", checked, "Esquerda")
-                                        }
-                                      />
-                                      <Label htmlFor={`vias-esquerda-${dateString}`}>Esquerda</Label>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`vias-centro-${dateString}`}
-                                        checked={details.vias?.includes("Centro")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "vias", checked, "Centro")
-                                        }
-                                      />
-                                      <Label htmlFor={`vias-centro-${dateString}`}>Centro</Label>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`vias-berma-${dateString}`}
-                                        checked={details.vias?.includes("Berma")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "vias", checked, "Berma")
-                                        }
-                                      />
-                                      <Label htmlFor={`vias-berma-${dateString}`}>Berma</Label>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* Esq/Refª por dia */}
-                                <div>
-                                  <Label className="text-xs text-gray-600 mb-1 block" htmlFor={`esq-ref-${dateString}`}>
-                                    Esq/Refª
-                                  </Label>
-                                  <Input
-                                    id={`esq-ref-${dateString}`}
-                                    type="text"
-                                    placeholder="Preenchimento livre"
-                                    value={details.esqRef || ""}
-                                    onChange={(e) => handleDailyDetailChange(dateString, "esqRef", e.target.value)}
-                                  />
-                                </div>
-
-                                {/* Outros locais a Intervencionar por dia (Checkbox) */}
-                                <div>
-                                  <Label className="text-xs text-gray-600 mb-1 block">
-                                    Outros locais a Intervencionar
-                                  </Label>
-                                  <div className="flex flex-wrap gap-x-4 gap-y-2">
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`outros-locais-separador-${dateString}`}
-                                        checked={details.outrosLocais?.includes("Separador Central")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(
-                                            dateString,
-                                            "outrosLocais",
-                                            checked,
-                                            "Separador Central",
-                                          )
-                                        }
-                                      />
-                                      <Label htmlFor={`outros-locais-separador-${dateString}`}>Separador Central</Label>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`outros-locais-talude-${dateString}`}
-                                        checked={details.outrosLocais?.includes("Talude")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "outrosLocais", checked, "Talude")
-                                        }
-                                      />
-                                      <Label htmlFor={`outros-locais-talude-${dateString}`}>Talude</Label>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`outros-locais-no-ramo-${dateString}`}
-                                        checked={details.outrosLocais?.includes("Nó/Ramo")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "outrosLocais", checked, "Nó/Ramo")
-                                        }
-                                      />
-                                      <Label htmlFor={`outros-locais-no-ramo-${dateString}`}>Nó/Ramo</Label>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      <Checkbox
-                                        id={`outros-locais-portagem-${dateString}`}
-                                        checked={details.outrosLocais?.includes("Portagem")}
-                                        onCheckedChange={(checked) =>
-                                          handleDailyDetailChange(dateString, "outrosLocais", checked, "Portagem")
-                                        }
-                                      />
-                                      <Label htmlFor={`outros-locais-portagem-${dateString}`}>Portagem</Label>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* Responsáveis por dia */}
-                                <div>
-                                  <Label className="text-xs text-gray-600 mb-1 block">Responsáveis</Label>
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                      <Label
-                                        className="text-xs text-gray-600 mb-1 block"
-                                        htmlFor={`responsavel-nome-${dateString}`}
-                                      >
-                                        Nome
-                                      </Label>
-                                      <Input
-                                        id={`responsavel-nome-${dateString}`}
-                                        type="text"
-                                        placeholder="Nome do responsável"
-                                        value={details.responsavelNome || ""}
-                                        onChange={(e) =>
-                                          handleDailyDetailChange(dateString, "responsavelNome", e.target.value)
-                                        }
-                                      />
-                                    </div>
-                                    <div>
-                                      <Label
-                                        className="text-xs text-gray-600 mb-1 block"
-                                        htmlFor={`responsavel-contacto-${dateString}`}
-                                      >
-                                        Contacto
-                                      </Label>
-                                      <Input
-                                        id={`responsavel-contacto-${dateString}`}
-                                        type="text"
-                                        placeholder="Contacto do responsável"
-                                        value={details.responsavelContacto || ""}
-                                        onChange={(e) =>
-                                          handleDailyDetailChange(dateString, "responsavelContacto", e.target.value)
-                                        }
-                                      />
-                                    </div>
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`sentido-ambos-${dateString}`}
+                                      checked={details.sentido?.includes("Ambos")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "sentido", checked, "Ambos")
+                                      }
+                                    />
+                                    <Label htmlFor={`sentido-ambos-${dateString}`}>Ambos</Label>
                                   </div>
                                 </div>
                               </div>
-                            )
-                          })}
-                        </div>
-                        <div className="mt-3 text-xs text-gray-600">
-                          Defina os horários, perfil, tipos de trabalho, quilometragem, sentido, vias, Esq/Refª, outros
-                          locais e responsáveis para cada dia selecionado.
-                        </div>
-                      </div>
-                    )}
-                  </div>
 
-                  <div className="flex gap-2 mt-6">
-                    <Button className="flex-1" onClick={handleSubmitOrUpdateVegetalPlan}>
-                      <CalendarDays className="w-4 h-4 mr-2" />
-                      {editingPlanId ? "Atualizar Plano de Manutenção Vegetal" : "Criar Plano de Manutenção Vegetal"}
+                              {/* Vias por dia (Checkbox) */}
+                              <div>
+                                <Label className="text-xs text-gray-600 mb-1 block">Vias</Label>
+                                <div className="flex flex-wrap gap-x-4 gap-y-2">
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`vias-direita-${dateString}`}
+                                      checked={details.vias?.includes("Direita")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "vias", checked, "Direita")
+                                      }
+                                    />
+                                    <Label htmlFor={`vias-direita-${dateString}`}>Direita</Label>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`vias-esquerda-${dateString}`}
+                                      checked={details.vias?.includes("Esquerda")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "vias", checked, "Esquerda")
+                                      }
+                                    />
+                                    <Label htmlFor={`vias-esquerda-${dateString}`}>Esquerda</Label>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`vias-centro-${dateString}`}
+                                      checked={details.vias?.includes("Centro")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "vias", checked, "Centro")
+                                      }
+                                    />
+                                    <Label htmlFor={`vias-centro-${dateString}`}>Centro</Label>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`vias-berma-${dateString}`}
+                                      checked={details.vias?.includes("Berma")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "vias", checked, "Berma")
+                                      }
+                                    />
+                                    <Label htmlFor={`vias-berma-${dateString}`}>Berma</Label>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Esq/Refª por dia */}
+                              <div>
+                                <Label className="text-xs text-gray-600 mb-1 block" htmlFor={`esq-ref-${dateString}`}>
+                                  Esq/Refª
+                                </Label>
+                                <Input
+                                  id={`esq-ref-${dateString}`}
+                                  type="text"
+                                  placeholder="Preenchimento livre"
+                                  value={details.esqRef || ""}
+                                  onChange={(e) => handleDailyDetailChange(dateString, "esqRef", e.target.value)}
+                                />
+                              </div>
+
+                              {/* Outros locais a Intervencionar por dia (Checkbox) */}
+                              <div>
+                                <Label className="text-xs text-gray-600 mb-1 block">
+                                  Outros locais a Intervencionar
+                                </Label>
+                                <div className="flex flex-wrap gap-x-4 gap-y-2">
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`outros-locais-separador-${dateString}`}
+                                      checked={details.outrosLocais?.includes("Separador Central")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(
+                                          dateString,
+                                          "outrosLocais",
+                                          checked,
+                                          "Separador Central",
+                                        )
+                                      }
+                                    />
+                                    <Label htmlFor={`outros-locais-separador-${dateString}`}>Separador Central</Label>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`outros-locais-talude-${dateString}`}
+                                      checked={details.outrosLocais?.includes("Talude")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "outrosLocais", checked, "Talude")
+                                      }
+                                    />
+                                    <Label htmlFor={`outros-locais-talude-${dateString}`}>Talude</Label>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`outros-locais-no-ramo-${dateString}`}
+                                      checked={details.outrosLocais?.includes("Nó/Ramo")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "outrosLocais", checked, "Nó/Ramo")
+                                      }
+                                    />
+                                    <Label htmlFor={`outros-locais-no-ramo-${dateString}`}>Nó/Ramo</Label>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`outros-locais-portagem-${dateString}`}
+                                      checked={details.outrosLocais?.includes("Portagem")}
+                                      onCheckedChange={(checked) =>
+                                        handleDailyDetailChange(dateString, "outrosLocais", checked, "Portagem")
+                                      }
+                                    />
+                                    <Label htmlFor={`outros-locais-portagem-${dateString}`}>Portagem</Label>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Responsáveis por dia */}
+                              <div>
+                                <Label className="text-xs text-gray-600 mb-1 block">Responsáveis</Label>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  <div>
+                                    <Label
+                                      className="text-xs text-gray-600 mb-1 block"
+                                      htmlFor={`responsavel-nome-${dateString}`}
+                                    >
+                                      Nome
+                                    </Label>
+                                    <Input
+                                      id={`responsavel-nome-${dateString}`}
+                                      type="text"
+                                      placeholder="Nome do responsável"
+                                      value={details.responsavelNome || ""}
+                                      onChange={(e) =>
+                                        handleDailyDetailChange(dateString, "responsavelNome", e.target.value)
+                                      }
+                                    />
+                                  </div>
+                                  <div>
+                                    <Label
+                                      className="text-xs text-gray-600 mb-1 block"
+                                      htmlFor={`responsavel-contacto-${dateString}`}
+                                    >
+                                      Contacto
+                                    </Label>
+                                    <Input
+                                      id={`responsavel-contacto-${dateString}`}
+                                      type="text"
+                                      placeholder="Contacto do responsável"
+                                      value={details.responsavelContacto || ""}
+                                      onChange={(e) =>
+                                        handleDailyDetailChange(dateString, "responsavelContacto", e.target.value)
+                                      }
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      <div className="mt-3 text-xs text-gray-600">
+                        Defina os horários, perfil, tipos de trabalho, quilometragem, sentido, vias, Esq/Refª, outros
+                        locais e responsáveis para cada dia selecionado.
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-2 mt-6">
+                  <Button className="flex-1" onClick={handleSubmitOrUpdateVegetalPlan}>
+                    <CalendarDays className="w-4 h-4 mr-2" />
+                    {editingPlanId ? "Atualizar Plano de Manutenção Vegetal" : "Criar Plano de Manutenção Vegetal"}
+                  </Button>
+                  {editingPlanId && (
+                    <Button variant="outline" onClick={resetForm}>
+                      Cancelar Edição
                     </Button>
-                    {editingPlanId && (
-                      <Button variant="outline" onClick={resetForm}>
-                        Cancelar Edição
-                      </Button>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Beneficiação de Pavimento */}
-            <TabsContent value="pavimento">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <Road className="w-5 h-5 text-gray-600" />
-                    <span>Beneficiação de Pavimento</span>
-                  </CardTitle>
-                  <CardDescription>Reparação, manutenção e melhoramento de pavimentos</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                      <div>
-                        <Label htmlFor="pavimento-tipo">Tipo de Pavimento</Label>
-                        <Select>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione o tipo" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="asfalto">Asfalto</SelectItem>
-                            <SelectItem value="betao">Betão</SelectItem>
-                            <SelectItem value="paralelo">Paralelo</SelectItem>
-                            <SelectItem value="terra">Terra Batida</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label htmlFor="pavimento-servico">Tipo de Serviço</Label>
-                        <Select>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="reparacao">Reparação de Buracos</SelectItem>
-                            <SelectItem value="recapeamento">Recapeamento</SelectItem>
-                            <SelectItem value="limpeza">Limpeza e Lavagem</SelectItem>
-                            <SelectItem value="sinalizacao">Sinalização</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label htmlFor="pavimento-extensao">Extensão (metros)</Label>
-                        <Input id="pavimento-extensao" type="number" placeholder="Ex: 50" />
-                      </div>
-                    </div>
-                    <div className="space-y-4">
-                      <div>
-                        <Label htmlFor="pavimento-largura">Largura (metros)</Label>
-                        <Input id="pavimento-largura" type="number" placeholder="Ex: 3.5" />
-                      </div>
-                      <div>
-                        <Label htmlFor="pavimento-data">Data Preferencial</Label>
-                        <Input id="pavimento-data" type="date" />
-                      </div>
-                      <div>
-                        <Label htmlFor="pavimento-transito">Condições de Trânsito</Label>
-                        <Select>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="livre">Trânsito Livre</SelectItem>
-                            <SelectItem value="controlado">Trânsito Controlado</SelectItem>
-                            <SelectItem value="fechado">Necessário Fechar Via</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <Label htmlFor="pavimento-local">Localização Detalhada</Label>
-                    <Input id="pavimento-local" placeholder="Rua, número, referências" />
-                  </div>
-                  <div>
-                    <Label htmlFor="pavimento-obs">Observações Técnicas</Label>
-                    <Textarea
-                      id="pavimento-obs"
-                      placeholder="Estado atual do pavimento, materiais preferidos, restrições de horário, etc."
-                      rows={4}
-                    />
-                  </div>
-                  <Button className="w-full">
-                    <CalendarDays className="w-4 h-4 mr-2" />
-                    Agendar Beneficiação de Pavimento
-                  </Button>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Manutenção Geral */}
-            <TabsContent value="geral">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <Wrench className="w-5 h-5 text-blue-600" />
-                    <span>Manutenção Geral</span>
-                  </CardTitle>
-                  <CardDescription>Serviços diversos de manutenção e reparação</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                      <div>
-                        <Label htmlFor="geral-categoria">Categoria</Label>
-                        <Select>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione a categoria" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="eletrica">Elétrica</SelectItem>
-                            <SelectItem value="canalizacao">Canalização</SelectItem>
-                            <SelectItem value="pintura">Pintura</SelectItem>
-                            <SelectItem value="carpintaria">Carpintaria</SelectItem>
-                            <SelectItem value="serralharia">Serralharia</SelectItem>
-                            <SelectItem value="limpeza">Limpeza</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label htmlFor="geral-prioridade">Prioridade</Label>
-                        <Select>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="baixa">
-                              <div className="flex items-center space-x-2">
-                                <Badge variant="secondary">Baixa</Badge>
-                              </div>
-                            </SelectItem>
-                            <SelectItem value="media">
-                              <div className="flex items-center space-x-2">
-                                <Badge variant="outline">Média</Badge>
-                              </div>
-                            </SelectItem>
-                            <SelectItem value="alta">
-                              <div className="flex items-center space-x-2">
-                                <Badge variant="destructive">Alta</Badge>
-                              </div>
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label htmlFor="geral-data">Data Limite</Label>
-                        <Input id="geral-data" type="date" />
-                      </div>
-                    </div>
-                    <div className="space-y-4">
-                      <div>
-                        <Label htmlFor="geral-local">Local do Serviço</Label>
-                        <Input id="geral-local" placeholder="Localização específica" />
-                      </div>
-                      <div>
-                        <Label htmlFor="geral-duracao">Duração Estimada</Label>
-                        <Select>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="1-2h">1-2 horas</SelectItem>
-                            <SelectItem value="meio-dia">Meio dia</SelectItem>
-                            <SelectItem value="dia-completo">Dia completo</SelectItem>
-                            <SelectItem value="varios-dias">Vários dias</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label htmlFor="geral-orcamento">Orçamento Máximo (€)</Label>
-                        <Input id="geral-orcamento" type="number" placeholder="Ex: 200" />
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <Label htmlFor="geral-descricao">Descrição Detalhada do Problema</Label>
-                    <Textarea
-                      id="geral-descricao"
-                      placeholder="Descreva o problema, materiais necessários, ferramentas especiais, etc."
-                      rows={4}
-                    />
-                  </div>
-                  <div className="flex items-center space-x-4">
-                    <input type="checkbox" id="geral-urgente" className="rounded" />
-                    <Label htmlFor="geral-urgente" className="text-sm">
-                      Este é um serviço urgente que requer atenção imediata
-                    </Label>
-                  </div>
-                  <Button className="w-full">
-                    <CalendarDays className="w-4 h-4 mr-2" />
-                    Agendar Manutenção Geral
-                  </Button>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {userRole === "go" && (
@@ -1813,7 +1688,7 @@ export default function ServiceSchedulerApp() {
         )}
 
         {/* Todos os Agendamentos (visível para prestador e GO) */}
-        {userRole !== "cco" && (
+        {userRole !== "cco" && userRole !== "admin" && (
           <Card className="mt-8">
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">

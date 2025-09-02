@@ -1,14 +1,14 @@
 {
-  "AutoEstrada": [
-    { "value": "A1", "label": "A1" },
-    { "value": "A2", "label": "A2" },
-    { "value": "A3", "label": "A3" },
-    { "value": "A4", "label": "A4" },
-    { "value": "A5", "label": "A5" },
-    { "value": "A6", "label": "A6" },
-    { "value": "A7", "label": "A7" },
-    { "value": "A8", "label": "A8" },
-    { "value": "A9", "label": "A9" }
-    { "value": "A10", "label": "A10" }  	
+  "autoEstradas": [
+    { "value": "A1", "label": "A1 - Auto-estrada do Norte" },
+    { "value": "A2", "label": "A2 - Auto-estrada do Sul" },
+    { "value": "A3", "label": "A3 - Auto-estrada do Noroeste" },
+    { "value": "A4", "label": "A4 - Auto-estrada do Norte Interior" },
+    { "value": "A5", "label": "A5 - Auto-estrada da Costa do Estoril" },
+    { "value": "A6", "label": "A6 - Auto-estrada do Sudoeste" },
+    { "value": "A7", "label": "A7 - Auto-estrada do Minho" },
+    { "value": "A8", "label": "A8 - Auto-estrada do Oeste" },
+    { "value": "A9", "label": "A9 - CREL" },
+    { "value": "A10", "label": "A10 - Auto-estrada Bucelas-Carregado" }
   ]
 }
