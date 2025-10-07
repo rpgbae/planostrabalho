@@ -1,14 +1,14 @@
 {
   "autoEstradas": [
-    { "value": "A1", "label": "A1 - Auto-estrada do Norte" },
-    { "value": "A2", "label": "A2 - Auto-estrada do Sul" },
-    { "value": "A3", "label": "A3 - Auto-estrada do Noroeste" },
-    { "value": "A4", "label": "A4 - Auto-estrada do Norte Interior" },
-    { "value": "A5", "label": "A5 - Auto-estrada da Costa do Estoril" },
-    { "value": "A6", "label": "A6 - Auto-estrada do Sudoeste" },
-    { "value": "A7", "label": "A7 - Auto-estrada do Minho" },
-    { "value": "A8", "label": "A8 - Auto-estrada do Oeste" },
-    { "value": "A9", "label": "A9 - CREL" },
-    { "value": "A10", "label": "A10 - Auto-estrada Bucelas-Carregado" }
+    "A1 - Auto-estrada do Norte",
+    "A2 - Auto-estrada do Sul",
+    "A3 - Auto-estrada do Porto",
+    "A4 - Auto-estrada do Douro",
+    "A5 - Auto-estrada da Costa do Estoril",
+    "A6 - Auto-estrada do Alentejo",
+    "A7 - Auto-estrada do Minho",
+    "A8 - Auto-estrada do Oeste",
+    "A9 - CREL",
+    "A10 - CRIL"
   ]
 }

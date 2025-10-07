@@ -1,14 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useEffect, useState } from "react"
 import { Label } from "@/components/ui/label"
-import { Loader2 } from "lucide-react"
-
-interface AutoEstrada {
-  value: string
-  label: string
-}
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface AutoEstradasSelectProps {
   value: string
@@ -17,75 +11,38 @@ interface AutoEstradasSelectProps {
   placeholder?: string
 }
 
-export function AutoEstradasSelect({
-  value,
-  onValueChange,
-  label = "Auto Estrada",
-  placeholder = "Selecione a Auto Estrada",
-}: AutoEstradasSelectProps) {
-  const [autoEstradas, setAutoEstradas] = useState<AutoEstrada[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+export function AutoEstradasSelect({ value, onValueChange, label, placeholder }: AutoEstradasSelectProps) {
+  const [options, setOptions] = useState<string[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const fetchAutoEstradas = async () => {
+    async function loadOptions() {
       try {
-        setIsLoading(true)
-        setError(null)
-
         const response = await fetch("/data/options.json")
-
-        if (!response.ok) {
-          throw new Error(`Erro ao carregar dados: ${response.status}`)
-        }
-
         const data = await response.json()
-
-        if (data.autoEstradas && Array.isArray(data.autoEstradas)) {
-          setAutoEstradas(data.autoEstradas)
-        } else {
-          throw new Error("Formato de dados inválido")
-        }
-      } catch (err) {
-        console.error("Erro ao carregar auto-estradas:", err)
-        setError(err instanceof Error ? err.message : "Erro desconhecido")
+        setOptions(data.autoEstradas || [])
+      } catch (error) {
+        console.error("Erro ao carregar opções:", error)
+        setOptions([])
       } finally {
-        setIsLoading(false)
+        setLoading(false)
       }
     }
 
-    fetchAutoEstradas()
+    loadOptions()
   }, [])
 
-  if (error) {
-    return (
-      <div className="space-y-2">
-        <Label>{label}:</Label>
-        <div className="p-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded">
-          Erro ao carregar opções: {error}
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className="space-y-2">
-      <Label htmlFor="auto-estrada">{label}:</Label>
-      <Select value={value} onValueChange={onValueChange} disabled={isLoading}>
-        <SelectTrigger className="w-full">
-          {isLoading ? (
-            <div className="flex items-center">
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              <span>Carregando...</span>
-            </div>
-          ) : (
-            <SelectValue placeholder={placeholder} />
-          )}
+    <div>
+      {label && <Label htmlFor="auto-estradas-select">{label}</Label>}
+      <Select value={value} onValueChange={onValueChange}>
+        <SelectTrigger id="auto-estradas-select">
+          <SelectValue placeholder={loading ? "Carregando..." : placeholder || "Selecione uma opção"} />
         </SelectTrigger>
         <SelectContent>
-          {autoEstradas.map((autoEstrada) => (
-            <SelectItem key={autoEstrada.value} value={autoEstrada.value}>
-              {autoEstrada.label}
+          {options.map((option) => (
+            <SelectItem key={option} value={option}>
+              {option}
             </SelectItem>
           ))}
         </SelectContent>

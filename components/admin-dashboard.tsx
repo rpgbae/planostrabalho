@@ -17,7 +17,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Users, UserCheck, UserX, UserPlus, Plus, Edit, Trash2, Calendar, Shield, Settings } from "lucide-react"
+import { Users, UserCheck, UserPlus, Plus, Edit, Trash2, Shield, Settings, LogOut, Wrench } from "lucide-react"
 
 interface User {
   id: string
@@ -28,7 +28,11 @@ interface User {
   createdAt: string
 }
 
-export default function AdminDashboard() {
+interface AdminDashboardProps {
+  onLogout?: () => void
+}
+
+export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
@@ -192,65 +196,41 @@ export default function AdminDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto space-y-8">
-        {/* Header */}
-        <div className="text-center">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Admin Dashboard</h1>
-          <p className="text-gray-600">Gestão de contas e utilizadores do sistema</p>
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center space-x-3">
+              <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+                <Wrench className="w-4 h-4 text-white" />
+              </div>
+              <h1 className="text-xl font-semibold text-gray-900">Portal de agendamento - Administração</h1>
+            </div>
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-2">
+                <Shield className="w-4 h-4 text-gray-500" />
+                <span className="text-sm text-gray-700">Administrador</span>
+              </div>
+              {onLogout && (
+                <Button variant="outline" size="sm" onClick={onLogout}>
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Sair
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
+      </header>
 
-        {/* Estatísticas */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">Total de Contas</CardTitle>
-              <Users className="h-5 w-5 text-blue-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold text-gray-900">{totalUsers}</div>
-              <p className="text-xs text-gray-500 mt-1">Contas registadas no sistema</p>
-            </CardContent>
-          </Card>
-
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">Contas Ativas</CardTitle>
-              <UserCheck className="h-5 w-5 text-green-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold text-green-600">{activeUsers}</div>
-              <p className="text-xs text-gray-500 mt-1">Utilizadores ativos</p>
-            </CardContent>
-          </Card>
-
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">Contas Inativas</CardTitle>
-              <UserX className="h-5 w-5 text-red-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold text-red-600">{inactiveUsers}</div>
-              <p className="text-xs text-gray-500 mt-1">Utilizadores inativos</p>
-            </CardContent>
-          </Card>
-
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">Última Conta</CardTitle>
-              <Calendar className="h-5 w-5 text-purple-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-lg font-bold text-gray-900">{lastCreatedUser?.name}</div>
-              <p className="text-xs text-gray-500 mt-1">
-                Criada em {new Date(lastCreatedUser?.createdAt || "").toLocaleDateString("pt-PT")}
-              </p>
-            </CardContent>
-          </Card>
+      <div className="max-w-7xl mx-auto p-8">
+        <h1 className="text-3xl font-bold mb-8">Dashboard do Administrador</h1>
+        <div className="bg-white rounded-lg shadow p-6">
+          <p className="text-gray-600">
+            Painel de administração em desenvolvimento. Aqui você poderá gerenciar contas e configurações do sistema.
+          </p>
         </div>
-
         {/* Gestão de Contas */}
-        <Card className="shadow-lg">
+        <Card className="shadow-lg mt-8">
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>

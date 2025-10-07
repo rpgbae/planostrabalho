@@ -7,13 +7,39 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CalendarDays, Leaf, Bold as Road, Wrench, User, LogOut, LayoutDashboard } from "lucide-react"
+import {
+  CalendarDays,
+  Leaf,
+  Bold as Road,
+  Wrench,
+  User,
+  LogOut,
+  LayoutDashboard,
+  Plus,
+  Trash2,
+  Edit,
+  ChevronLeft,
+  ChevronRight,
+  CalendarIcon,
+} from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Calendar } from "@/components/ui/calendar"
-import { format, getWeek, getYear, startOfWeek } from "date-fns"
+import {
+  format,
+  getWeek,
+  getYear,
+  startOfWeek,
+  startOfMonth,
+  endOfMonth,
+  eachDayOfInterval,
+  isSameMonth,
+  isSameDay,
+  addMonths,
+  subMonths,
+} from "date-fns"
 import { ptBR } from "date-fns/locale"
 import {
   Dialog,
@@ -24,6 +50,7 @@ import {
   DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import AdminDashboard from "@/components/admin-dashboard"
 import { AutoEstradasSelect } from "@/components/auto-estradas-select"
 
@@ -31,6 +58,22 @@ import { AutoEstradasSelect } from "@/components/auto-estradas-select"
 interface DateRange {
   from?: Date
   to?: Date
+}
+
+// Tipagem para uma atividade
+interface Atividade {
+  id: string
+  descricaoAtividade: string
+  periodo: DateRange
+  pkInicial: string
+  pkFinal: string
+  sentido: string
+  perfil: string
+  localIntervencao: string
+  restricoes: string
+  esquema: string
+  observacoes: string
+  detalhesDiarios: { [dateString: string]: DailyDetail }
 }
 
 // Tipagem para os detalhes diários
@@ -52,13 +95,23 @@ interface DailyDetail {
 interface SubmittedPlan {
   id: string
   numero: string
-  descricaoGeral: string
-  periodo: DateRange
-  detalhesDiarios: { [dateString: string]: DailyDetail }
+  tipoTrabalho: string
+  autoEstrada?: string // Added autoEstrada field to SubmittedPlan interface
+  atividades: Atividade[]
   status: "Pendente Confirmação" | "Confirmado" | "Rejeitado"
   tipo: "Manutenção Vegetal" | "Beneficiação de Pavimento" | "Manutenção Geral"
   isInISistema: boolean
-  comentarioGO?: string // Comentário do GO quando rejeita
+  comentarioGO?: string
+  kmInicial?: string
+  kmFinal?: string
+  trabalhoFixo?: boolean
+  trabalhoMovel?: boolean
+  fiscalizacaoNome?: string
+  fiscalizacaoContato?: string
+  entidadeExecutanteNome?: string
+  entidadeExecutanteContato?: string
+  sinalizacaoNome?: string
+  sinalizacaoContato?: string
 }
 
 export default function ServiceSchedulerApp() {
@@ -71,7 +124,8 @@ export default function ServiceSchedulerApp() {
   const [isUrgente, setIsUrgente] = useState(false)
 
   const [vegetalNumero, setVegetalNumero] = useState("")
-  const [vegetalDescricao, setVegetalDescricao] = useState("")
+  const [tipoTrabalho, setTipoTrabalho] = useState("")
+  const [descricaoAtividade, setDescricaoAtividade] = useState("")
   const [submittedPlans, setSubmittedPlans] = useState<SubmittedPlan[]>([])
   const [selectedPlanForDetails, setSelectedPlanForDetails] = useState<SubmittedPlan | null>(null)
   const [blockedDates, setBlockedDates] = useState<Set<string>>(new Set())
@@ -80,8 +134,28 @@ export default function ServiceSchedulerApp() {
   const [autoEstrada, setAutoEstrada] = useState("")
   const [kmInicial, setKmInicial] = useState("")
   const [kmFinal, setKmFinal] = useState("")
+  const [pkInicial, setPkInicial] = useState("")
+  const [pkFinal, setPkFinal] = useState("")
+  const [sentido, setSentido] = useState("")
+  const [perfil, setPerfil] = useState("")
+  const [trabalhoFixo, setTrabalhoFixo] = useState(false)
+  const [trabalhoMovel, setTrabalhoMovel] = useState(false)
+  const [localIntervencao, setLocalIntervencao] = useState("")
+  const [restricoes, setRestricoes] = useState("")
+  const [esquema, setEsquema] = useState("")
+  const [observacoes, setObservacoes] = useState("")
 
-  // Novo estado para o pop-up de notificação
+  // Estado para lista de atividades
+  const [atividades, setAtividades] = useState<Atividade[]>([])
+  const [editingAtividadeId, setEditingAtividadeId] = useState<string | null>(null)
+
+  const [fiscalizacaoNome, setFiscalizacaoNome] = useState("")
+  const [fiscalizacaoContato, setFiscalizacaoContato] = useState("")
+  const [entidadeExecutanteNome, setEntidadeExecutanteNome] = useState("")
+  const [entidadeExecutanteContato, setEntidadeExecutanteContato] = useState("")
+  const [sinalizacaoNome, setSinalizacaoNome] = useState("")
+  const [sinalizacaoContato, setSinalizacaoContato] = useState("")
+
   const [notificationDialog, setNotificationDialog] = useState<{
     open: boolean
     title: string
@@ -92,7 +166,6 @@ export default function ServiceSchedulerApp() {
     description: "",
   })
 
-  // Estados para confirmação de aprovação/rejeição
   const [confirmationDialog, setConfirmationDialog] = useState<{
     open: boolean
     type: "approve" | "reject"
@@ -106,32 +179,33 @@ export default function ServiceSchedulerApp() {
   })
 
   const [rejectionComment, setRejectionComment] = useState("")
-
-  // Novo estado para o contador semanal
   const [weeklyPlanCounts, setWeeklyPlanCounts] = useState<{ [weekId: string]: number }>({})
-
-  // Estados para o diálogo de planos semanais
   const [isWeeklyPlansDialogOpen, setIsWeeklyPlansDialogOpen] = useState(false)
   const [currentWeekPlans, setCurrentWeekPlans] = useState<SubmittedPlan[]>([])
   const [currentWeekTitle, setCurrentWeekTitle] = useState("")
 
-  // Efeito para recalcular as datas bloqueadas e o contador semanal
+  // New calendar view states
+  const [currentCalendarMonth, setCurrentCalendarMonth] = useState(new Date())
+  const [calendarFilterPeriod, setCalendarFilterPeriod] = useState<string>("all")
+  const [calendarFilterTipoTrabalho, setCalendarFilterTipoTrabalho] = useState<string>("all")
+
   useEffect(() => {
     const newBlockedDates = new Set<string>()
     const newWeeklyCounts: { [weekId: string]: number } = {}
 
     submittedPlans.forEach((plan) => {
-      // Lógica para datas bloqueadas
-      if (plan.status === "Confirmado" && plan.periodo.from && plan.periodo.to) {
-        const dates = getDatesInRange(plan.periodo.from, plan.periodo.to)
-        dates.forEach((date) => newBlockedDates.add(format(date, "yyyy-MM-dd")))
+      if (plan.status === "Confirmado") {
+        plan.atividades.forEach((atividade) => {
+          if (atividade.periodo.from && atividade.periodo.to) {
+            const dates = getDatesInRange(atividade.periodo.from, atividade.periodo.to)
+            dates.forEach((date) => newBlockedDates.add(format(date, "yyyy-MM-dd")))
+          }
+        })
       }
 
-      // Lógica para contador semanal (baseado na data de início do plano)
-      // APENAS PLANOS CONFIRMADOS E SEMANA DE SEGUNDA A SEXTA
-      if (plan.status === "Confirmado" && plan.periodo.from) {
-        const weekNum = getWeek(plan.periodo.from, { locale: ptBR, weekStartsOn: 1 }) // Semana começa na segunda
-        const year = getYear(plan.periodo.from)
+      if (plan.status === "Confirmado" && plan.atividades.length > 0 && plan.atividades[0].periodo.from) {
+        const weekNum = getWeek(plan.atividades[0].periodo.from, { locale: ptBR, weekStartsOn: 1 })
+        const year = getYear(plan.atividades[0].periodo.from)
         const weekId = `${year}-Semana-${weekNum}`
         newWeeklyCounts[weekId] = (newWeeklyCounts[weekId] || 0) + 1
       }
@@ -148,7 +222,7 @@ export default function ServiceSchedulerApp() {
       setIsLoggedIn(true)
       setActiveTab("vegetal")
     } else if (loginData.email === "go@teste.pt") {
-      setUser({ name: "Gestor de Operações", email: loginData.email })
+      setUser({ name: "Gestor Operacional", email: loginData.email })
       setUserRole("go")
       setIsLoggedIn(true)
       setActiveTab("aprovacao")
@@ -175,13 +249,32 @@ export default function ServiceSchedulerApp() {
     setDateRange(undefined)
     setDailyDetails({})
     setVegetalNumero("")
-    setVegetalDescricao("")
+    setTipoTrabalho("")
+    setDescricaoAtividade("")
     setEditingPlanId(null)
     setActiveTab("vegetal")
     setAutoEstrada("")
     setKmInicial("")
     setKmFinal("")
     setIsUrgente(false)
+    setPkInicial("")
+    setPkFinal("")
+    setSentido("")
+    setPerfil("")
+    setTrabalhoFixo(false)
+    setTrabalhoMovel(false)
+    setLocalIntervencao("")
+    setRestricoes("")
+    setEsquema("")
+    setObservacoes("")
+    setAtividades([])
+    setEditingAtividadeId(null)
+    setFiscalizacaoNome("")
+    setFiscalizacaoContato("")
+    setEntidadeExecutanteNome("")
+    setEntidadeExecutanteContato("")
+    setSinalizacaoNome("")
+    setSinalizacaoContato("")
   }
 
   const getDatesInRange = (startDate?: Date, endDate?: Date): Date[] => {
@@ -233,24 +326,48 @@ export default function ServiceSchedulerApp() {
     })
   }
 
-  const resetForm = () => {
-    setVegetalNumero("")
-    setVegetalDescricao("")
+  const resetAtividadeForm = () => {
+    setDescricaoAtividade("")
     setDateRange(undefined)
     setDailyDetails({})
-    setEditingPlanId(null)
+    setPkInicial("")
+    setPkFinal("")
+    setSentido("")
+    setPerfil("")
+    setLocalIntervencao("")
+    setRestricoes("")
+    setEsquema("")
+    setObservacoes("")
+    setEditingAtividadeId(null)
+  }
+
+  const resetForm = () => {
+    setVegetalNumero("")
+    setTipoTrabalho("")
     setAutoEstrada("")
     setKmInicial("")
     setKmFinal("")
     setIsUrgente(false)
+    setTrabalhoFixo(false)
+    setTrabalhoMovel(false)
+    setAtividades([])
+    resetAtividadeForm()
+    setEditingPlanId(null)
+    setFiscalizacaoNome("")
+    setFiscalizacaoContato("")
+    setEntidadeExecutanteNome("")
+    setEntidadeExecutanteContato("")
+    setSinalizacaoNome("")
+    setSinalizacaoContato("")
   }
 
-  const handleSubmitOrUpdateVegetalPlan = () => {
-    if (!dateRange?.from || !dateRange?.to) {
+  const handleAdicionarAtividade = () => {
+    // Validação básica
+    if (!descricaoAtividade || !dateRange?.from || !dateRange?.to) {
       setNotificationDialog({
         open: true,
-        title: "Erro na Submissão",
-        description: "Por favor, selecione um período de datas para o plano.",
+        title: "Campos Obrigatórios",
+        description: "Por favor, preencha a descrição da atividade e o período antes de adicionar.",
       })
       return
     }
@@ -258,18 +375,6 @@ export default function ServiceSchedulerApp() {
     const selectedDates = getDatesInRange(dateRange.from, dateRange.to)
     const hasOverlap = selectedDates.some((date) => {
       const dateStr = format(date, "yyyy-MM-dd")
-      if (editingPlanId) {
-        const currentPlan = submittedPlans.find((p) => p.id === editingPlanId)
-        if (
-          currentPlan &&
-          currentPlan.status === "Confirmado" &&
-          getDatesInRange(currentPlan.periodo.from, currentPlan.periodo.to).some(
-            (d) => format(d, "yyyy-MM-dd") === dateStr,
-          )
-        ) {
-          return false
-        }
-      }
       return blockedDates.has(dateStr)
     })
 
@@ -277,8 +382,80 @@ export default function ServiceSchedulerApp() {
       setNotificationDialog({
         open: true,
         title: "Datas Bloqueadas",
-        description:
-          "Não é possível submeter/atualizar o plano. Uma ou mais datas selecionadas já estão bloqueadas por um plano aprovado.",
+        description: "Uma ou mais datas selecionadas já estão bloqueadas por um plano aprovado.",
+      })
+      return
+    }
+
+    if (editingAtividadeId) {
+      // Atualizar atividade existente
+      setAtividades((prev) =>
+        prev.map((ativ) =>
+          ativ.id === editingAtividadeId
+            ? {
+                ...ativ,
+                descricaoAtividade,
+                periodo: dateRange,
+                pkInicial,
+                pkFinal,
+                sentido,
+                perfil,
+                localIntervencao,
+                restricoes,
+                esquema,
+                observacoes,
+                detalhesDiarios: dailyDetails,
+              }
+            : ativ,
+        ),
+      )
+    } else {
+      // Adicionar nova atividade
+      const novaAtividade: Atividade = {
+        id: `atividade-${Date.now()}`,
+        descricaoAtividade,
+        periodo: dateRange,
+        pkInicial,
+        pkFinal,
+        sentido,
+        perfil,
+        localIntervencao,
+        restricoes,
+        esquema,
+        observacoes,
+        detalhesDiarios: dailyDetails,
+      }
+      setAtividades((prev) => [...prev, novaAtividade])
+    }
+
+    resetAtividadeForm()
+  }
+
+  const handleEditarAtividade = (atividade: Atividade) => {
+    setEditingAtividadeId(atividade.id)
+    setDescricaoAtividade(atividade.descricaoAtividade)
+    setDateRange(atividade.periodo)
+    setPkInicial(atividade.pkInicial)
+    setPkFinal(atividade.pkFinal)
+    setSentido(atividade.sentido)
+    setPerfil(atividade.perfil)
+    setLocalIntervencao(atividade.localIntervencao)
+    setRestricoes(atividade.restricoes)
+    setEsquema(atividade.esquema)
+    setObservacoes(atividade.observacoes)
+    setDailyDetails(atividade.detalhesDiarios)
+  }
+
+  const handleRemoverAtividade = (atividadeId: string) => {
+    setAtividades((prev) => prev.filter((ativ) => ativ.id !== atividadeId))
+  }
+
+  const handleSubmitOrUpdateVegetalPlan = () => {
+    if (atividades.length === 0) {
+      setNotificationDialog({
+        open: true,
+        title: "Erro na Submissão",
+        description: "Por favor, adicione pelo menos uma atividade ao plano.",
       })
       return
     }
@@ -290,42 +467,61 @@ export default function ServiceSchedulerApp() {
             ? {
                 ...plan,
                 numero: vegetalNumero,
-                descricaoGeral: vegetalDescricao,
-                periodo: dateRange,
-                detalhesDiarios: dailyDetails,
+                tipoTrabalho: tipoTrabalho,
+                autoEstrada: autoEstrada, // Save autoEstrada when updating
+                atividades: atividades,
                 status: "Pendente Confirmação",
-                comentarioGO: undefined, // Remove o comentário anterior ao resubmeter
+                comentarioGO: undefined,
+                kmInicial,
+                kmFinal,
+                trabalhoFixo,
+                trabalhoMovel,
+                fiscalizacaoNome,
+                fiscalizacaoContato,
+                entidadeExecutanteNome,
+                entidadeExecutanteContato,
+                sinalizacaoNome,
+                sinalizacaoContato,
               }
             : plan,
         ),
       )
       setNotificationDialog({
         open: true,
-        title: "Plano Atualizado!",
-        description: "Plano de Manutenção Vegetal atualizado com sucesso! Status: Pendente Confirmação.",
+        title: "Plano Submetido",
+        description: "Plano de trabalho submetido com sucesso. Status: Pendente de Confirmação",
       })
     } else {
       const newPlan: SubmittedPlan = {
         id: `plan-${Date.now()}`,
         numero: vegetalNumero,
-        descricaoGeral: vegetalDescricao,
-        periodo: dateRange,
-        detalhesDiarios: dailyDetails,
+        tipoTrabalho: tipoTrabalho,
+        autoEstrada: autoEstrada, // Save autoEstrada when creating
+        atividades: atividades,
         status: "Pendente Confirmação",
         tipo: "Manutenção Vegetal",
         isInISistema: false,
+        kmInicial,
+        kmFinal,
+        trabalhoFixo,
+        trabalhoMovel,
+        fiscalizacaoNome,
+        fiscalizacaoContato,
+        entidadeExecutanteNome,
+        entidadeExecutanteContato,
+        sinalizacaoNome,
+        sinalizacaoContato,
       }
       setSubmittedPlans((prev) => [...prev, newPlan])
       setNotificationDialog({
         open: true,
-        title: "Plano Submetido!",
-        description: "Plano de Manutenção Vegetal submetido com sucesso! Status: Pendente Confirmação.",
+        title: "Plano Submetido",
+        description: "Plano de trabalho submetido com sucesso. Status: Pendente de Confirmação",
       })
     }
     resetForm()
   }
 
-  // Função para abrir o diálogo de confirmação
   const openConfirmationDialog = (type: "approve" | "reject", planId: string, planTitle: string) => {
     setConfirmationDialog({
       open: true,
@@ -333,10 +529,9 @@ export default function ServiceSchedulerApp() {
       planId,
       planTitle,
     })
-    setRejectionComment("") // Reset do comentário
+    setRejectionComment("")
   }
 
-  // Função para confirmar aprovação
   const confirmApproval = () => {
     setSubmittedPlans((prev) =>
       prev.map((plan) => (plan.id === confirmationDialog.planId ? { ...plan, status: "Confirmado" } : plan)),
@@ -349,7 +544,6 @@ export default function ServiceSchedulerApp() {
     setConfirmationDialog({ open: false, type: "approve", planId: "", planTitle: "" })
   }
 
-  // Função para confirmar rejeição
   const confirmRejection = () => {
     setSubmittedPlans((prev) =>
       prev.map((plan) =>
@@ -374,9 +568,19 @@ export default function ServiceSchedulerApp() {
   const handleEditPlan = (planToEdit: SubmittedPlan) => {
     setEditingPlanId(planToEdit.id)
     setVegetalNumero(planToEdit.numero)
-    setVegetalDescricao(planToEdit.descricaoGeral)
-    setDateRange(planToEdit.periodo)
-    setDailyDetails(planToEdit.detalhesDiarios)
+    setTipoTrabalho(planToEdit.tipoTrabalho)
+    setAutoEstrada(planToEdit.autoEstrada || "") // Load autoEstrada when editing
+    setKmInicial(planToEdit.kmInicial || "")
+    setKmFinal(planToEdit.kmFinal || "")
+    setTrabalhoFixo(planToEdit.trabalhoFixo || false)
+    setTrabalhoMovel(planToEdit.trabalhoMovel || false)
+    setAtividades(planToEdit.atividades)
+    setFiscalizacaoNome(planToEdit.fiscalizacaoNome || "")
+    setFiscalizacaoContato(planToEdit.fiscalizacaoContato || "")
+    setEntidadeExecutanteNome(planToEdit.entidadeExecutanteNome || "")
+    setEntidadeExecutanteContato(planToEdit.entidadeExecutanteContato || "")
+    setSinalizacaoNome(planToEdit.sinalizacaoNome || "")
+    setSinalizacaoContato(planToEdit.sinalizacaoContato || "")
     setActiveTab("vegetal")
   }
 
@@ -384,33 +588,21 @@ export default function ServiceSchedulerApp() {
 
   const disableBlockedDates = (date: Date) => {
     const dateStr = format(date, "yyyy-MM-dd")
-    if (editingPlanId) {
-      const currentPlan = submittedPlans.find((p) => p.id === editingPlanId)
-      if (currentPlan && currentPlan.periodo.from && currentPlan.periodo.to) {
-        const oldDatesOfEditingPlan = getDatesInRange(currentPlan.periodo.from, currentPlan.periodo.to).map((d) =>
-          format(d, "yyyy-MM-dd"),
-        )
-        if (oldDatesOfEditingPlan.includes(dateStr)) {
-          return false
-        }
-      }
-    }
     return blockedDates.has(dateStr)
   }
 
-  // Função para lidar com o clique no contador semanal
   const handleViewWeeklyPlans = (weekId: string) => {
     const [yearStr, , weekNumStr] = weekId.split("-")
     const year = Number.parseInt(yearStr)
     const weekNum = Number.parseInt(weekNumStr)
-    const startDate = startOfWeek(new Date(year, 0, (weekNum - 1) * 7 + 1), { locale: ptBR, weekStartsOn: 1 }) // Segunda-feira
+    const startDate = startOfWeek(new Date(year, 0, (weekNum - 1) * 7 + 1), { locale: ptBR, weekStartsOn: 1 })
     const endDate = new Date(startDate)
-    endDate.setDate(startDate.getDate() + 4) // Sexta-feira
+    endDate.setDate(startDate.getDate() + 4)
 
     const plansForWeek = submittedPlans.filter((plan) => {
-      if (!plan.periodo.from || plan.status !== "Confirmado") return false // Apenas planos confirmados
-      const planWeekNum = getWeek(plan.periodo.from, { locale: ptBR, weekStartsOn: 1 })
-      const planYear = getYear(plan.periodo.from)
+      if (plan.atividades.length === 0 || !plan.atividades[0].periodo.from || plan.status !== "Confirmado") return false
+      const planWeekNum = getWeek(plan.atividades[0].periodo.from, { locale: ptBR, weekStartsOn: 1 })
+      const planYear = getYear(plan.atividades[0].periodo.from)
       return planWeekNum === weekNum && planYear === year
     })
     setCurrentWeekPlans(plansForWeek)
@@ -420,17 +612,52 @@ export default function ServiceSchedulerApp() {
     setIsWeeklyPlansDialogOpen(true)
   }
 
-  // Função para alternar o status isInISistema
   const handleToggleISistemaStatus = (planId: string) => {
     setSubmittedPlans((prev) =>
       prev.map((plan) => (plan.id === planId ? { ...plan, isInISistema: !plan.isInISistema } : plan)),
     )
   }
 
-  // Função para obter o plano em edição (para mostrar comentário do GO)
   const getEditingPlan = () => {
     if (!editingPlanId) return null
     return submittedPlans.find((plan) => plan.id === editingPlanId)
+  }
+
+  const getPlansForDate = (date: Date) => {
+    return submittedPlans.filter((plan) => {
+      // Apply filters
+      if (calendarFilterTipoTrabalho !== "all" && plan.tipoTrabalho !== calendarFilterTipoTrabalho) {
+        return false
+      }
+
+      // Check if any activity falls on this date
+      return plan.atividades.some((atividade) => {
+        if (!atividade.periodo.from || !atividade.periodo.to) return false
+        const dates = getDatesInRange(atividade.periodo.from, atividade.periodo.to)
+        return dates.some((d) => isSameDay(d, date))
+      })
+    })
+  }
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "Confirmado":
+        return "bg-green-100 border-green-300 text-green-800"
+      case "Pendente Confirmação":
+        return "bg-yellow-100 border-yellow-300 text-yellow-800"
+      case "Rejeitado":
+        return "bg-red-100 border-red-300 text-red-800"
+      default:
+        return "bg-gray-100 border-gray-300 text-gray-800"
+    }
+  }
+
+  const getUniqueWorkTypes = () => {
+    const types = new Set<string>()
+    submittedPlans.forEach((plan) => {
+      if (plan.tipoTrabalho) types.add(plan.tipoTrabalho)
+    })
+    return Array.from(types)
   }
 
   if (!isLoggedIn) {
@@ -478,14 +705,12 @@ export default function ServiceSchedulerApp() {
     )
   }
 
-  // Se for admin, mostrar apenas o dashboard de admin
   if (userRole === "admin") {
-    return <AdminDashboard />
+    return <AdminDashboard onLogout={handleLogout} />
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <header className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
@@ -509,7 +734,6 @@ export default function ServiceSchedulerApp() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Planos de Trabalho</h2>
@@ -523,9 +747,12 @@ export default function ServiceSchedulerApp() {
                 <div>
                   <CardTitle className="flex items-center space-x-2">
                     <Leaf className="w-5 h-5 text-green-600" />
-                    <span>Manutenção Vegetal</span>
+                    <span>
+                      {autoEstrada || vegetalNumero || tipoTrabalho
+                        ? `${autoEstrada || "..."} - ${vegetalNumero || "..."} - ${tipoTrabalho || "..."}`
+                        : "Novo Plano de Trabalho"}
+                    </span>
                   </CardTitle>
-                  <CardDescription>Serviços de jardinagem, poda e manutenção de áreas verdes</CardDescription>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Label htmlFor="urgente-checkbox" className="text-sm font-medium">
@@ -546,52 +773,29 @@ export default function ServiceSchedulerApp() {
                   />
                 </div>
 
-                {/* Novos campos de Km inicial e final */}
-                {autoEstrada && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <Label htmlFor="km-inicial">Km Inicial</Label>
-                      <Input
-                        id="km-inicial"
-                        type="number"
-                        placeholder="Ex: 100"
-                        value={kmInicial}
-                        onChange={(e) => setKmInicial(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="km-final">Km Final</Label>
-                      <Input
-                        id="km-final"
-                        type="number"
-                        placeholder="Ex: 150"
-                        value={kmFinal}
-                        onChange={(e) => setKmFinal(e.target.value)}
-                      />
-                    </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="km-inicial">Km inicial</Label>
+                    <Input
+                      id="km-inicial"
+                      type="number"
+                      placeholder="Ex: 100"
+                      value={kmInicial}
+                      onChange={(e) => setKmInicial(e.target.value)}
+                    />
                   </div>
-                )}
-
-                {/* Mostrar diferença de Km's se ambos estiverem preenchidos */}
-                {autoEstrada && kmInicial && kmFinal && (
-                  <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg">
-                    {(() => {
-                      const inicial = Number.parseFloat(kmInicial)
-                      const final = Number.parseFloat(kmFinal)
-                      if (!isNaN(inicial) && !isNaN(final)) {
-                        const diferenca = final - inicial
-                        if (diferenca >= 0) {
-                          return `📏 Extensão do trabalho: ${diferenca} Km (de ${inicial} Km até ${final} Km)`
-                        } else {
-                          return <span className="text-red-600">⚠️ Km final deve ser maior que o Km inicial</span>
-                        }
-                      }
-                      return null
-                    })()}
+                  <div>
+                    <Label htmlFor="km-final">Km final</Label>
+                    <Input
+                      id="km-final"
+                      type="number"
+                      placeholder="Ex: 150"
+                      value={kmFinal}
+                      onChange={(e) => setKmFinal(e.target.value)}
+                    />
                   </div>
-                )}
+                </div>
 
-                {/* Mostrar comentário do GO se estiver editando um plano rejeitado */}
                 {editingPlanId && getEditingPlan()?.comentarioGO && (
                   <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
                     <Label className="text-sm font-semibold text-red-800 mb-2 block">
@@ -613,10 +817,10 @@ export default function ServiceSchedulerApp() {
                   </div>
 
                   <div>
-                    <Label htmlFor="vegetal-tipo-trabalho">Plano de Trabalho</Label>
-                    <Select value={vegetalDescricao} onValueChange={setVegetalDescricao}>
+                    <Label htmlFor="vegetal-tipo-trabalho">Tipo de Trabalho</Label>
+                    <Select value={tipoTrabalho} onValueChange={setTipoTrabalho}>
                       <SelectTrigger id="vegetal-tipo-trabalho">
-                        <SelectValue placeholder="Selecione o plano de trabalho" />
+                        <SelectValue placeholder="Selecione o tipo de trabalho" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="opcao1">Opção 1 (a definir)</SelectItem>
@@ -626,8 +830,133 @@ export default function ServiceSchedulerApp() {
                     </Select>
                   </div>
 
+                  <div className="relative my-8">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t-2 border-gray-400" />
+                    </div>
+                    <div className="relative flex justify-center text-sm uppercase">
+                      <span className="bg-white px-4 text-gray-700 font-semibold tracking-wide">
+                        Detalhes das Atividades
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Lista de atividades já adicionadas */}
+                  {atividades.length > 0 && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-lg font-semibold">Atividades Adicionadas ({atividades.length})</Label>
+                      </div>
+                      <Accordion type="single" collapsible className="w-full">
+                        {atividades.map((atividade, index) => (
+                          <AccordionItem key={atividade.id} value={atividade.id}>
+                            <AccordionTrigger className="hover:no-underline">
+                              <div className="flex items-center justify-between w-full pr-4">
+                                <span className="font-medium">
+                                  Atividade {index + 1}: {atividade.descricaoAtividade.substring(0, 50)}
+                                  {atividade.descricaoAtividade.length > 50 && "..."}
+                                </span>
+                                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                  <Button variant="ghost" size="sm" onClick={() => handleEditarAtividade(atividade)}>
+                                    <Edit className="w-4 h-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleRemoverAtividade(atividade.id)}
+                                  >
+                                    <Trash2 className="w-4 h-4 text-red-500" />
+                                  </Button>
+                                </div>
+                              </div>
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <div className="p-4 space-y-3 bg-gray-50 rounded-lg">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                                  <div>
+                                    <Label className="font-semibold">Descrição:</Label>
+                                    <p className="text-gray-700">{atividade.descricaoAtividade}</p>
+                                  </div>
+                                  <div>
+                                    <Label className="font-semibold">Período:</Label>
+                                    <p className="text-gray-700">
+                                      {atividade.periodo.from && atividade.periodo.to
+                                        ? `${format(atividade.periodo.from, "dd/MM/yyyy")} - ${format(atividade.periodo.to, "dd/MM/yyyy")}`
+                                        : "N/A"}
+                                    </p>
+                                  </div>
+                                  {atividade.pkInicial && (
+                                    <div>
+                                      <Label className="font-semibold">Pk Inicial:</Label>
+                                      <p className="text-gray-700">{atividade.pkInicial}</p>
+                                    </div>
+                                  )}
+                                  {atividade.pkFinal && (
+                                    <div>
+                                      <Label className="font-semibold">Pk Final:</Label>
+                                      <p className="text-gray-700">{atividade.pkFinal}</p>
+                                    </div>
+                                  )}
+                                  {atividade.sentido && (
+                                    <div>
+                                      <Label className="font-semibold">Sentido:</Label>
+                                      <p className="text-gray-700 capitalize">{atividade.sentido}</p>
+                                    </div>
+                                  )}
+                                  {atividade.perfil && (
+                                    <div>
+                                      <Label className="font-semibold">Perfil:</Label>
+                                      <p className="text-gray-700">{atividade.perfil}</p>
+                                    </div>
+                                  )}
+                                  {atividade.localIntervencao && (
+                                    <div>
+                                      <Label className="font-semibold">Local de Intervenção:</Label>
+                                      <p className="text-gray-700 capitalize">
+                                        {atividade.localIntervencao.replace(/-/g, " ")}
+                                      </p>
+                                    </div>
+                                  )}
+                                  {atividade.restricoes && (
+                                    <div>
+                                      <Label className="font-semibold">Restrições:</Label>
+                                      <p className="text-gray-700">{atividade.restricoes}</p>
+                                    </div>
+                                  )}
+                                  {atividade.esquema && (
+                                    <div>
+                                      <Label className="font-semibold">Esquema:</Label>
+                                      <p className="text-gray-700">{atividade.esquema}</p>
+                                    </div>
+                                  )}
+                                  {atividade.observacoes && (
+                                    <div className="md:col-span-2">
+                                      <Label className="font-semibold">Observações:</Label>
+                                      <p className="text-gray-700 whitespace-pre-wrap">{atividade.observacoes}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        ))}
+                      </Accordion>
+                    </div>
+                  )}
+
                   <div>
-                    <Label>Data</Label>
+                    <Label htmlFor="descricao-atividade">Descrição da atividade</Label>
+                    <Textarea
+                      id="descricao-atividade"
+                      placeholder="Descreva a atividade a realizar..."
+                      value={descricaoAtividade}
+                      onChange={(e) => setDescricaoAtividade(e.target.value)}
+                      rows={3}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Período</Label>
                     <Calendar
                       initialFocus
                       mode="range"
@@ -646,435 +975,257 @@ export default function ServiceSchedulerApp() {
                     </div>
                   </div>
 
-                  {datesToRender.length >= 1 && (
-                    <div className="mt-4 border rounded-lg p-4 bg-blue-50">
-                      <Label className="text-sm font-medium mb-3 block">Detalhes por Dia Selecionado</Label>
-                      <div className="space-y-4">
-                        {datesToRender.map((date) => {
-                          const dateString = format(date, "yyyy-MM-dd")
-                          const details = dailyDetails[dateString] || {
-                            timeSlot: "",
-                            perfilTipo: "",
-                            tipoTrabalho: [],
-                            kmsInicio: "",
-                            kmsFim: "",
-                            sentido: [],
-                            vias: [],
-                            esqRef: "",
-                            outrosLocais: [],
-                            responsavelNome: "",
-                            responsavelContacto: "",
-                          }
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="pk-inicial">Pk inicial</Label>
+                      <Input
+                        id="pk-inicial"
+                        type="number"
+                        placeholder="Ex: 10.5"
+                        step="0.1"
+                        value={pkInicial}
+                        onChange={(e) => setPkInicial(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="pk-final">Pk final</Label>
+                      <Input
+                        id="pk-final"
+                        type="number"
+                        placeholder="Ex: 15.3"
+                        step="0.1"
+                        value={pkFinal}
+                        onChange={(e) => setPkFinal(e.target.value)}
+                      />
+                    </div>
+                  </div>
 
-                          return (
-                            <div key={dateString} className="bg-white p-4 rounded border space-y-4">
-                              <div className="flex items-center justify-between mb-3">
-                                <span className="font-medium text-sm">{format(date, "PPP", { locale: ptBR })}</span>
-                              </div>
+                  <div>
+                    <Label htmlFor="sentido">Sentido</Label>
+                    <Select value={sentido} onValueChange={setSentido}>
+                      <SelectTrigger id="sentido">
+                        <SelectValue placeholder="Selecione o sentido" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="crescente">Crescente</SelectItem>
+                        <SelectItem value="decrescente">Decrescente</SelectItem>
+                        <SelectItem value="ambos">Ambos</SelectItem>
+                        <SelectItem value="nenhum">Nenhum</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                  <Label className="text-xs text-gray-600 mb-1 block">Horário de Início</Label>
-                                  <Select
-                                    value={details.timeSlot?.split("-")[0] || ""}
-                                    onValueChange={(value) => {
-                                      const currentEnd = details.timeSlot?.split("-")[1] || ""
-                                      handleDailyDetailChange(
-                                        dateString,
-                                        "timeSlot",
-                                        currentEnd ? `${value}-${currentEnd}` : value,
-                                      )
-                                    }}
-                                  >
-                                    <SelectTrigger className="w-full">
-                                      <SelectValue placeholder="Início" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {Array.from({ length: 21 }, (_, i) => {
-                                        const hour = Math.floor(i / 2) + 8
-                                        const minute = (i % 2) * 30
-                                        const timeString = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`
-                                        return (
-                                          <SelectItem key={timeString} value={timeString}>
-                                            {timeString}
-                                          </SelectItem>
-                                        )
-                                      })}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
+                  <div>
+                    <Label htmlFor="perfil">Perfil</Label>
+                    <Select value={perfil} onValueChange={setPerfil}>
+                      <SelectTrigger id="perfil">
+                        <SelectValue placeholder="Selecione o perfil" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="2x2">2 x 2</SelectItem>
+                        <SelectItem value="2x3">2 x 3</SelectItem>
+                        <SelectItem value="2x4">2 x 4</SelectItem>
+                        <SelectItem value="1x1">1 x 1</SelectItem>
+                        <SelectItem value="1x2">1 x 2</SelectItem>
+                        <SelectItem value="garrafao">Garrafão de Portagem</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-                                <div>
-                                  <Label className="text-xs text-gray-600 mb-1 block">Horário de Fim</Label>
-                                  <Select
-                                    value={details.timeSlot?.split("-")[1] || ""}
-                                    onValueChange={(value) => {
-                                      const currentStart = details.timeSlot?.split("-")[0] || ""
-                                      handleDailyDetailChange(
-                                        dateString,
-                                        "timeSlot",
-                                        currentStart ? `${currentStart}-${value}` : value,
-                                      )
-                                    }}
-                                  >
-                                    <SelectTrigger className="w-full">
-                                      <SelectValue placeholder="Fim" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {Array.from({ length: 21 }, (_, i) => {
-                                        const hour = Math.floor(i / 2) + 8
-                                        const minute = (i % 2) * 30 + 30
-                                        const adjustedHour = minute >= 60 ? hour + 1 : hour
-                                        const adjustedMinute = minute >= 60 ? minute - 60 : minute
-                                        const timeString = `${adjustedHour.toString().padStart(2, "0")}:${adjustedMinute.toString().padStart(2, "0")}`
-                                        return (
-                                          <SelectItem key={timeString} value={timeString}>
-                                            {timeString}
-                                          </SelectItem>
-                                        )
-                                      })}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                              </div>
-
-                              {details.timeSlot?.includes("-") && details.timeSlot?.split("-").length === 2 && (
-                                <div className="mt-2 text-xs text-gray-500">
-                                  {(() => {
-                                    const [start, end] = details.timeSlot.split("-")
-                                    if (start && end) {
-                                      const startTime = new Date(`2000-01-01 ${start}:00`)
-                                      const endTime = new Date(`2000-01-01 ${end}:00`)
-                                      const diffMs = endTime.getTime() - startTime.getTime()
-                                      const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-                                      const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
-
-                                      if (diffMs > 0) {
-                                        return `Duração: ${diffHours}h${diffMinutes > 0 ? ` ${diffMinutes}min` : ""}`
-                                      } else {
-                                        return (
-                                          <span className="text-red-500">
-                                            ⚠️ Horário de fim deve ser posterior ao início
-                                          </span>
-                                        )
-                                      }
-                                    }
-                                    return null
-                                  })()}
-                                </div>
-                              )}
-
-                              <div>
-                                <Label className="text-xs text-gray-600 mb-1 block" htmlFor={`perfil-${dateString}`}>
-                                  Perfil transversal tipo
-                                </Label>
-                                <Select
-                                  value={details.perfilTipo || ""}
-                                  onValueChange={(value) => handleDailyDetailChange(dateString, "perfilTipo", value)}
-                                >
-                                  <SelectTrigger id={`perfil-${dateString}`} className="w-full">
-                                    <SelectValue placeholder="Selecione o perfil" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="2x2">2x2</SelectItem>
-                                    <SelectItem value="3x3">3x3</SelectItem>
-                                    <SelectItem value="4x4">4x4</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-
-                              <div>
-                                <Label className="text-xs text-gray-600 mb-1 block">Tipos de trabalho</Label>
-                                <div className="flex items-center space-x-4">
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`trabalho-fixos-${dateString}`}
-                                      checked={details.tipoTrabalho?.includes("fixos")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "tipoTrabalho", checked, "fixos")
-                                      }
-                                    />
-                                    <Label htmlFor={`trabalho-fixos-${dateString}`}>Fixos</Label>
-                                  </div>
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`trabalho-moveis-${dateString}`}
-                                      checked={details.tipoTrabalho?.includes("moveis")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "tipoTrabalho", checked, "moveis")
-                                      }
-                                    />
-                                    <Label htmlFor={`trabalho-moveis-${dateString}`}>Móveis</Label>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Km's por dia */}
-                              <div>
-                                <Label className="text-xs text-gray-600 mb-1 block">Km's</Label>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                  <div>
-                                    <Label
-                                      className="text-xs text-gray-600 mb-1 block"
-                                      htmlFor={`kms-inicio-${dateString}`}
-                                    >
-                                      Início (Km)
-                                    </Label>
-                                    <Input
-                                      id={`kms-inicio-${dateString}`}
-                                      type="number"
-                                      placeholder="Ex: 100"
-                                      value={details.kmsInicio || ""}
-                                      onChange={(e) => handleDailyDetailChange(dateString, "kmsInicio", e.target.value)}
-                                    />
-                                  </div>
-                                  <div>
-                                    <Label
-                                      className="text-xs text-gray-600 mb-1 block"
-                                      htmlFor={`kms-fim-${dateString}`}
-                                    >
-                                      Fim (Km)
-                                    </Label>
-                                    <Input
-                                      id={`kms-fim-${dateString}`}
-                                      type="number"
-                                      placeholder="Ex: 150"
-                                      value={details.kmsFim || ""}
-                                      onChange={(e) => handleDailyDetailChange(dateString, "kmsFim", e.target.value)}
-                                    />
-                                  </div>
-                                </div>
-                                {details.kmsInicio && details.kmsFim && (
-                                  <div className="mt-2 text-xs text-gray-500">
-                                    {(() => {
-                                      const inicio = Number.parseFloat(details.kmsInicio)
-                                      const fim = Number.parseFloat(details.kmsFim)
-                                      if (!isNaN(inicio) && !isNaN(fim)) {
-                                        const diffKms = fim - inicio
-                                        if (diffKms >= 0) {
-                                          return `Km's Percorridos: ${diffKms} Km`
-                                        } else {
-                                          return (
-                                            <span className="text-red-500">
-                                              ⚠️ Km final deve ser maior ou igual ao inicial
-                                            </span>
-                                          )
-                                        }
-                                      }
-                                      return null
-                                    })()}
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Sentido por dia (Checkbox) */}
-                              <div>
-                                <Label className="text-xs text-gray-600 mb-1 block">Sentido</Label>
-                                <div className="flex items-center space-x-4">
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`sentido-ns-${dateString}`}
-                                      checked={details.sentido?.includes("N/S")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "sentido", checked, "N/S")
-                                      }
-                                    />
-                                    <Label htmlFor={`sentido-ns-${dateString}`}>N/S</Label>
-                                  </div>
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`sentido-sn-${dateString}`}
-                                      checked={details.sentido?.includes("S/N")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "sentido", checked, "S/N")
-                                      }
-                                    />
-                                    <Label htmlFor={`sentido-sn-${dateString}`}>S/N</Label>
-                                  </div>
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`sentido-ambos-${dateString}`}
-                                      checked={details.sentido?.includes("Ambos")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "sentido", checked, "Ambos")
-                                      }
-                                    />
-                                    <Label htmlFor={`sentido-ambos-${dateString}`}>Ambos</Label>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Vias por dia (Checkbox) */}
-                              <div>
-                                <Label className="text-xs text-gray-600 mb-1 block">Vias</Label>
-                                <div className="flex flex-wrap gap-x-4 gap-y-2">
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`vias-direita-${dateString}`}
-                                      checked={details.vias?.includes("Direita")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "vias", checked, "Direita")
-                                      }
-                                    />
-                                    <Label htmlFor={`vias-direita-${dateString}`}>Direita</Label>
-                                  </div>
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`vias-esquerda-${dateString}`}
-                                      checked={details.vias?.includes("Esquerda")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "vias", checked, "Esquerda")
-                                      }
-                                    />
-                                    <Label htmlFor={`vias-esquerda-${dateString}`}>Esquerda</Label>
-                                  </div>
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`vias-centro-${dateString}`}
-                                      checked={details.vias?.includes("Centro")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "vias", checked, "Centro")
-                                      }
-                                    />
-                                    <Label htmlFor={`vias-centro-${dateString}`}>Centro</Label>
-                                  </div>
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`vias-berma-${dateString}`}
-                                      checked={details.vias?.includes("Berma")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "vias", checked, "Berma")
-                                      }
-                                    />
-                                    <Label htmlFor={`vias-berma-${dateString}`}>Berma</Label>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Esq/Refª por dia */}
-                              <div>
-                                <Label className="text-xs text-gray-600 mb-1 block" htmlFor={`esq-ref-${dateString}`}>
-                                  Esq/Refª
-                                </Label>
-                                <Input
-                                  id={`esq-ref-${dateString}`}
-                                  type="text"
-                                  placeholder="Preenchimento livre"
-                                  value={details.esqRef || ""}
-                                  onChange={(e) => handleDailyDetailChange(dateString, "esqRef", e.target.value)}
-                                />
-                              </div>
-
-                              {/* Outros locais a Intervencionar por dia (Checkbox) */}
-                              <div>
-                                <Label className="text-xs text-gray-600 mb-1 block">
-                                  Outros locais a Intervencionar
-                                </Label>
-                                <div className="flex flex-wrap gap-x-4 gap-y-2">
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`outros-locais-separador-${dateString}`}
-                                      checked={details.outrosLocais?.includes("Separador Central")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(
-                                          dateString,
-                                          "outrosLocais",
-                                          checked,
-                                          "Separador Central",
-                                        )
-                                      }
-                                    />
-                                    <Label htmlFor={`outros-locais-separador-${dateString}`}>Separador Central</Label>
-                                  </div>
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`outros-locais-talude-${dateString}`}
-                                      checked={details.outrosLocais?.includes("Talude")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "outrosLocais", checked, "Talude")
-                                      }
-                                    />
-                                    <Label htmlFor={`outros-locais-talude-${dateString}`}>Talude</Label>
-                                  </div>
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`outros-locais-no-ramo-${dateString}`}
-                                      checked={details.outrosLocais?.includes("Nó/Ramo")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "outrosLocais", checked, "Nó/Ramo")
-                                      }
-                                    />
-                                    <Label htmlFor={`outros-locais-no-ramo-${dateString}`}>Nó/Ramo</Label>
-                                  </div>
-                                  <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`outros-locais-portagem-${dateString}`}
-                                      checked={details.outrosLocais?.includes("Portagem")}
-                                      onCheckedChange={(checked) =>
-                                        handleDailyDetailChange(dateString, "outrosLocais", checked, "Portagem")
-                                      }
-                                    />
-                                    <Label htmlFor={`outros-locais-portagem-${dateString}`}>Portagem</Label>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Responsáveis por dia */}
-                              <div>
-                                <Label className="text-xs text-gray-600 mb-1 block">Responsáveis</Label>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                  <div>
-                                    <Label
-                                      className="text-xs text-gray-600 mb-1 block"
-                                      htmlFor={`responsavel-nome-${dateString}`}
-                                    >
-                                      Nome
-                                    </Label>
-                                    <Input
-                                      id={`responsavel-nome-${dateString}`}
-                                      type="text"
-                                      placeholder="Nome do responsável"
-                                      value={details.responsavelNome || ""}
-                                      onChange={(e) =>
-                                        handleDailyDetailChange(dateString, "responsavelNome", e.target.value)
-                                      }
-                                    />
-                                  </div>
-                                  <div>
-                                    <Label
-                                      className="text-xs text-gray-600 mb-1 block"
-                                      htmlFor={`responsavel-contacto-${dateString}`}
-                                    >
-                                      Contacto
-                                    </Label>
-                                    <Input
-                                      id={`responsavel-contacto-${dateString}`}
-                                      type="text"
-                                      placeholder="Contacto do responsável"
-                                      value={details.responsavelContacto || ""}
-                                      onChange={(e) =>
-                                        handleDailyDetailChange(dateString, "responsavelContacto", e.target.value)
-                                      }
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        })}
+                  <div>
+                    <Label className="mb-3 block">Tipo de Trabalhos</Label>
+                    <div className="flex flex-col sm:flex-row gap-4">
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="trabalho-fixo"
+                          checked={trabalhoFixo}
+                          onCheckedChange={(checked) => setTrabalhoFixo(checked as boolean)}
+                        />
+                        <Label htmlFor="trabalho-fixo" className="font-normal cursor-pointer">
+                          Trabalhos Fixos
+                        </Label>
                       </div>
-                      <div className="mt-3 text-xs text-gray-600">
-                        Defina os horários, perfil, tipos de trabalho, quilometragem, sentido, vias, Esq/Refª, outros
-                        locais e responsáveis para cada dia selecionado.
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="trabalho-movel"
+                          checked={trabalhoMovel}
+                          onCheckedChange={(checked) => setTrabalhoMovel(checked as boolean)}
+                        />
+                        <Label htmlFor="trabalho-movel" className="font-normal cursor-pointer">
+                          Trabalhos Móveis
+                        </Label>
                       </div>
                     </div>
-                  )}
+                  </div>
+
+                  <div>
+                    <Label htmlFor="local-intervencao">Local de intervenção</Label>
+                    <Select value={localIntervencao} onValueChange={setLocalIntervencao}>
+                      <SelectTrigger id="local-intervencao">
+                        <SelectValue placeholder="Selecione o local de intervenção" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="plena-via">Plena Via</SelectItem>
+                        <SelectItem value="no-ramo">Nó / Ramo</SelectItem>
+                        <SelectItem value="separador-central">Separador Central</SelectItem>
+                        <SelectItem value="talude">Talude</SelectItem>
+                        <SelectItem value="acesso-exterior">Acesso Exterior</SelectItem>
+                        <SelectItem value="portagem">Portagem</SelectItem>
+                        <SelectItem value="area-servico">Área de Serviço</SelectItem>
+                        <SelectItem value="area-repouso">Área de Repouso</SelectItem>
+                        <SelectItem value="fora-concessao">Fora da Concessão</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="restricoes">Restrições</Label>
+                    <Select value={restricoes} onValueChange={setRestricoes}>
+                      <SelectTrigger id="restricoes">
+                        <SelectValue placeholder="Selecione as restrições" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="restricao1">Restrição 1 (a definir)</SelectItem>
+                        <SelectItem value="restricao2">Restrição 2 (a definir)</SelectItem>
+                        <SelectItem value="restricao3">Restrição 3 (a definir)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="esquema">Esquema</Label>
+                    <Select value={esquema} onValueChange={setEsquema}>
+                      <SelectTrigger id="esquema">
+                        <SelectValue placeholder="Selecione o esquema" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="esquema1">Esquema 1 (a definir)</SelectItem>
+                        <SelectItem value="esquema2">Esquema 2 (a definir)</SelectItem>
+                        <SelectItem value="esquema3">Esquema 3 (a definir)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="observacoes">Observações</Label>
+                    <Textarea
+                      id="observacoes"
+                      placeholder="Adicione observações relevantes..."
+                      value={observacoes}
+                      onChange={(e) => setObservacoes(e.target.value)}
+                      rows={4}
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 mt-6">
+                    <Button size="sm" onClick={handleAdicionarAtividade} variant="outline">
+                      <Plus className="w-4 h-4 mr-2" />
+                      {editingAtividadeId ? "Atualizar Atividade" : "Adicionar Atividade"}
+                    </Button>
+                    {editingAtividadeId && (
+                      <Button size="sm" variant="ghost" onClick={resetAtividadeForm}>
+                        Cancelar
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="relative my-8">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t-2 border-gray-400" />
+                  </div>
+                  <div className="relative flex justify-center text-sm uppercase">
+                    <span className="bg-white px-4 text-gray-700 font-semibold tracking-wide">Contactos</span>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  {/* Fiscalização */}
+                  <div className="space-y-4">
+                    <Label className="text-base font-semibold text-gray-900">Fiscalização</Label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="fiscalizacao-nome">Nome</Label>
+                        <Input
+                          id="fiscalizacao-nome"
+                          type="text"
+                          placeholder="Nome do responsável"
+                          value={fiscalizacaoNome}
+                          onChange={(e) => setFiscalizacaoNome(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="fiscalizacao-contato">Contato</Label>
+                        <Input
+                          id="fiscalizacao-contato"
+                          type="tel"
+                          placeholder="Telefone ou email"
+                          value={fiscalizacaoContato}
+                          onChange={(e) => setFiscalizacaoContato(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Entidade Executante */}
+                  <div className="space-y-4">
+                    <Label className="text-base font-semibold text-gray-900">Entidade Executante</Label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="entidade-nome">Nome</Label>
+                        <Input
+                          id="entidade-nome"
+                          type="text"
+                          placeholder="Nome do responsável"
+                          value={entidadeExecutanteNome}
+                          onChange={(e) => setEntidadeExecutanteNome(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="entidade-contato">Contato</Label>
+                        <Input
+                          id="entidade-contato"
+                          type="tel"
+                          placeholder="Telefone ou email"
+                          value={entidadeExecutanteContato}
+                          onChange={(e) => setEntidadeExecutanteContato(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Sinalização */}
+                  <div className="space-y-4">
+                    <Label className="text-base font-semibold text-gray-900">Sinalização</Label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="sinalizacao-nome">Nome</Label>
+                        <Input
+                          id="sinalizacao-nome"
+                          type="text"
+                          placeholder="Nome do responsável"
+                          value={sinalizacaoNome}
+                          onChange={(e) => setSinalizacaoNome(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="sinalizacao-contato">Contato</Label>
+                        <Input
+                          id="sinalizacao-contato"
+                          type="tel"
+                          placeholder="Telefone ou email"
+                          value={sinalizacaoContato}
+                          onChange={(e) => setSinalizacaoContato(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex gap-2 mt-6">
                   <Button className="flex-1" onClick={handleSubmitOrUpdateVegetalPlan}>
                     <CalendarDays className="w-4 h-4 mr-2" />
-                    {editingPlanId ? "Atualizar Plano de Manutenção Vegetal" : "Criar Plano de Manutenção Vegetal"}
+                    {editingPlanId ? "Atualizar Plano de Trabalho" : "Submeter Plano de Trabalho"}
                   </Button>
                   {editingPlanId && (
                     <Button variant="outline" onClick={resetForm}>
@@ -1089,10 +1240,14 @@ export default function ServiceSchedulerApp() {
 
         {userRole === "go" && (
           <Tabs defaultValue={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-1">
+            <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="aprovacao" className="flex items-center space-x-2">
                 <CalendarDays className="w-4 h-4" />
                 <span>Aprovação de Planos</span>
+              </TabsTrigger>
+              <TabsTrigger value="calendario" className="flex items-center space-x-2">
+                <CalendarIcon className="w-4 h-4" />
+                <span>Calendário</span>
               </TabsTrigger>
             </TabsList>
 
@@ -1118,13 +1273,10 @@ export default function ServiceSchedulerApp() {
                         >
                           <div className="flex-1 space-y-1 mb-3 sm:mb-0">
                             <h4 className="font-medium text-lg">
-                              {plan.descricaoGeral || `Plano de ${plan.tipo} (Nº: ${plan.numero || "N/A"})`}
+                              {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
                             </h4>
                             <p className="text-sm text-gray-500">
-                              Período:{" "}
-                              {plan.periodo.from && plan.periodo.to
-                                ? `${format(plan.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(plan.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
-                                : "Não definido"}
+                              {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
                             </p>
                             <Badge variant="outline">{plan.status}</Badge>
                             <Dialog onOpenChange={(open) => !open && setSelectedPlanForDetails(null)}>
@@ -1141,7 +1293,6 @@ export default function ServiceSchedulerApp() {
                                       Resumo completo do plano de trabalho submetido.
                                     </DialogDescription>
 
-                                    {/* Comentário do GO no cabeçalho */}
                                     {selectedPlanForDetails.comentarioGO && (
                                       <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
                                         <Label className="text-sm font-semibold text-red-800 block mb-1">
@@ -1160,25 +1311,45 @@ export default function ServiceSchedulerApp() {
                                       </div>
 
                                       <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Nº:</Label>
+                                        <Label className="font-semibold">Sublanço:</Label>
                                         <span className="text-gray-700">{selectedPlanForDetails.numero || "N/A"}</span>
                                       </div>
 
                                       <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Descrição Geral:</Label>
+                                        <Label className="font-semibold">Tipo de Trabalho:</Label>
                                         <span className="text-gray-700">
-                                          {selectedPlanForDetails.descricaoGeral || "N/A"}
+                                          {selectedPlanForDetails.tipoTrabalho || "N/A"}
                                         </span>
                                       </div>
 
-                                      <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Período:</Label>
-                                        <span className="text-gray-700">
-                                          {selectedPlanForDetails.periodo.from && selectedPlanForDetails.periodo.to
-                                            ? `${format(selectedPlanForDetails.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(selectedPlanForDetails.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
-                                            : "Não definido"}
-                                        </span>
-                                      </div>
+                                      {selectedPlanForDetails.kmInicial && (
+                                        <div className="flex flex-col space-y-2">
+                                          <Label className="font-semibold">Km Inicial:</Label>
+                                          <span className="text-gray-700">{selectedPlanForDetails.kmInicial}</span>
+                                        </div>
+                                      )}
+
+                                      {selectedPlanForDetails.kmFinal && (
+                                        <div className="flex flex-col space-y-2">
+                                          <Label className="font-semibold">Km Final:</Label>
+                                          <span className="text-gray-700">{selectedPlanForDetails.kmFinal}</span>
+                                        </div>
+                                      )}
+
+                                      {(selectedPlanForDetails.trabalhoFixo ||
+                                        selectedPlanForDetails.trabalhoMovel) && (
+                                        <div className="flex flex-col space-y-2">
+                                          <Label className="font-semibold">Tipo de Trabalhos:</Label>
+                                          <span className="text-gray-700">
+                                            {[
+                                              selectedPlanForDetails.trabalhoFixo && "Trabalhos Fixos",
+                                              selectedPlanForDetails.trabalhoMovel && "Trabalhos Móveis",
+                                            ]
+                                              .filter(Boolean)
+                                              .join(", ")}
+                                          </span>
+                                        </div>
+                                      )}
 
                                       <div className="flex flex-col space-y-2">
                                         <Label className="font-semibold">Status:</Label>
@@ -1197,128 +1368,199 @@ export default function ServiceSchedulerApp() {
                                       </div>
                                     </div>
 
-                                    <div className="border-t pt-4">
-                                      <h5 className="text-lg font-semibold mb-4">Detalhes Diários:</h5>
-                                      {Object.entries(selectedPlanForDetails.detalhesDiarios).length === 0 ? (
-                                        <p className="text-gray-500">Nenhum detalhe diário preenchido.</p>
-                                      ) : (
-                                        <div className="space-y-6">
-                                          {Object.entries(selectedPlanForDetails.detalhesDiarios).map(
-                                            ([dateString, details]) => (
-                                              <div key={dateString} className="border rounded-lg p-4 bg-gray-50">
-                                                <h6 className="font-medium text-md mb-3 text-blue-600">
-                                                  Dia: {format(new Date(dateString), "PPP", { locale: ptBR })}
-                                                </h6>
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                  <div className="flex flex-col space-y-1">
-                                                    <Label className="text-xs font-medium text-gray-600">
-                                                      Horário:
-                                                    </Label>
-                                                    <span className="text-sm">{details.timeSlot || "N/A"}</span>
-                                                  </div>
-
-                                                  <div className="flex flex-col space-y-1">
-                                                    <Label className="text-xs font-medium text-gray-600">
-                                                      Perfil Tipo:
-                                                    </Label>
-                                                    <span className="text-sm">{details.perfilTipo || "N/A"}</span>
-                                                  </div>
-
-                                                  <div className="flex flex-col space-y-1">
-                                                    <Label className="text-xs font-medium text-gray-600">
-                                                      Tipo Trabalho:
-                                                    </Label>
-                                                    <span className="text-sm">
-                                                      {details.tipoTrabalho?.join(", ") || "N/A"}
-                                                    </span>
-                                                  </div>
-
-                                                  <div className="flex flex-col space-y-1">
-                                                    <Label className="text-xs font-medium text-gray-600">
-                                                      Km's Início:
-                                                    </Label>
-                                                    <span className="text-sm">{details.kmsInicio || "N/A"}</span>
-                                                  </div>
-
-                                                  <div className="flex flex-col space-y-1">
-                                                    <Label className="text-xs font-medium text-gray-600">
-                                                      Km's Fim:
-                                                    </Label>
-                                                    <span className="text-sm">{details.kmsFim || "N/A"}</span>
-                                                  </div>
-
-                                                  <div className="flex flex-col space-y-1">
-                                                    <Label className="text-xs font-medium text-gray-600">
-                                                      Sentido:
-                                                    </Label>
-                                                    <span className="text-sm">
-                                                      {details.sentido?.join(", ") || "N/A"}
-                                                    </span>
-                                                  </div>
-
-                                                  <div className="flex flex-col space-y-1">
-                                                    <Label className="text-xs font-medium text-gray-600">Vias:</Label>
-                                                    <span className="text-sm">{details.vias?.join(", ") || "N/A"}</span>
-                                                  </div>
-
-                                                  <div className="flex flex-col space-y-1">
-                                                    <Label className="text-xs font-medium text-gray-600">
-                                                      Esq/Refª:
-                                                    </Label>
-                                                    <span className="text-sm">{details.esqRef || "N/A"}</span>
-                                                  </div>
-
-                                                  <div className="flex flex-col space-y-1">
-                                                    <Label className="text-xs font-medium text-gray-600">
-                                                      Outros Locais:
-                                                    </Label>
-                                                    <span className="text-sm">
-                                                      {details.outrosLocais?.join(", ") || "N/A"}
-                                                    </span>
-                                                  </div>
-
-                                                  <div className="flex flex-col space-y-1">
-                                                    <Label className="text-xs font-medium text-gray-600">
-                                                      Responsável:
-                                                    </Label>
-                                                    <span className="text-sm">{details.responsavelNome || "N/A"}</span>
-                                                  </div>
-
-                                                  <div className="flex flex-col space-y-1">
-                                                    <Label className="text-xs font-medium text-gray-600">
-                                                      Contacto:
-                                                    </Label>
-                                                    <span className="text-sm">
-                                                      {details.responsavelContacto || "N/A"}
-                                                    </span>
-                                                  </div>
-                                                </div>
-                                              </div>
-                                            ),
+                                    {(selectedPlanForDetails.fiscalizacaoNome ||
+                                      selectedPlanForDetails.entidadeExecutanteNome ||
+                                      selectedPlanForDetails.sinalizacaoNome) && (
+                                      <div className="border-t pt-4">
+                                        <Label className="text-base font-semibold mb-3 block">Contactos</Label>
+                                        <div className="space-y-3">
+                                          {selectedPlanForDetails.fiscalizacaoNome && (
+                                            <div>
+                                              <Label className="font-semibold text-sm">Fiscalização:</Label>
+                                              <p className="text-gray-700">
+                                                {selectedPlanForDetails.fiscalizacaoNome}
+                                                {selectedPlanForDetails.fiscalizacaoContato &&
+                                                  ` - ${selectedPlanForDetails.fiscalizacaoContato}`}
+                                              </p>
+                                            </div>
+                                          )}
+                                          {selectedPlanForDetails.entidadeExecutanteNome && (
+                                            <div>
+                                              <Label className="font-semibold text-sm">Entidade Executante:</Label>
+                                              <p className="text-gray-700">
+                                                {selectedPlanForDetails.entidadeExecutanteNome}
+                                                {selectedPlanForDetails.entidadeExecutanteContato &&
+                                                  ` - ${selectedPlanForDetails.entidadeExecutanteContato}`}
+                                              </p>
+                                            </div>
+                                          )}
+                                          {selectedPlanForDetails.sinalizacaoNome && (
+                                            <div>
+                                              <Label className="font-semibold text-sm">Sinalização:</Label>
+                                              <p className="text-gray-700">
+                                                {selectedPlanForDetails.sinalizacaoNome}
+                                                {selectedPlanForDetails.sinalizacaoContato &&
+                                                  ` - ${selectedPlanForDetails.sinalizacaoContato}`}
+                                              </p>
+                                            </div>
                                           )}
                                         </div>
+                                      </div>
+                                    )}
+
+                                    <div className="border-t pt-4">
+                                      <h5 className="text-lg font-semibold mb-4">
+                                        Atividades ({selectedPlanForDetails.atividades.length}):
+                                      </h5>
+                                      {selectedPlanForDetails.atividades.length === 0 ? (
+                                        <p className="text-gray-500">Nenhuma atividade adicionada.</p>
+                                      ) : (
+                                        <Accordion type="single" collapsible className="w-full">
+                                          {selectedPlanForDetails.atividades.map((atividade, index) => (
+                                            <AccordionItem key={atividade.id} value={atividade.id}>
+                                              <AccordionTrigger>
+                                                Atividade {index + 1}: {atividade.descricaoAtividade.substring(0, 50)}
+                                                {atividade.descricaoAtividade.length > 50 && "..."}
+                                              </AccordionTrigger>
+                                              <AccordionContent>
+                                                <div className="p-4 space-y-3 bg-gray-50 rounded-lg">
+                                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                                                    <div>
+                                                      <Label className="font-semibold">Descrição:</Label>
+                                                      <p className="text-gray-700">{atividade.descricaoAtividade}</p>
+                                                    </div>
+                                                    <div>
+                                                      <Label className="font-semibold">Período:</Label>
+                                                      <p className="text-gray-700">
+                                                        {atividade.periodo.from && atividade.periodo.to
+                                                          ? `${format(atividade.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(atividade.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
+                                                          : "N/A"}
+                                                      </p>
+                                                    </div>
+                                                    {atividade.pkInicial && (
+                                                      <div>
+                                                        <Label className="font-semibold">Pk Inicial:</Label>
+                                                        <p className="text-gray-700">{atividade.pkInicial}</p>
+                                                      </div>
+                                                    )}
+                                                    {atividade.pkFinal && (
+                                                      <div>
+                                                        <Label className="font-semibold">Pk Final:</Label>
+                                                        <p className="text-gray-700">{atividade.pkFinal}</p>
+                                                      </div>
+                                                    )}
+                                                    {atividade.sentido && (
+                                                      <div>
+                                                        <Label className="font-semibold">Sentido:</Label>
+                                                        <p className="text-gray-700 capitalize">{atividade.sentido}</p>
+                                                      </div>
+                                                    )}
+                                                    {atividade.perfil && (
+                                                      <div>
+                                                        <Label className="font-semibold">Perfil:</Label>
+                                                        <p className="text-gray-700">{atividade.perfil}</p>
+                                                      </div>
+                                                    )}
+                                                    {atividade.localIntervencao && (
+                                                      <div>
+                                                        <Label className="font-semibold">Local de Intervenção:</Label>
+                                                        <p className="text-gray-700 capitalize">
+                                                          {atividade.localIntervencao.replace(/-/g, " ")}
+                                                        </p>
+                                                      </div>
+                                                    )}
+                                                    {atividade.restricoes && (
+                                                      <div>
+                                                        <Label className="font-semibold">Restrições:</Label>
+                                                        <p className="text-gray-700">{atividade.restricoes}</p>
+                                                      </div>
+                                                    )}
+                                                    {atividade.esquema && (
+                                                      <div>
+                                                        <Label className="font-semibold">Esquema:</Label>
+                                                        <p className="text-gray-700">{atividade.esquema}</p>
+                                                      </div>
+                                                    )}
+                                                    {atividade.observacoes && (
+                                                      <div className="md:col-span-2">
+                                                        <Label className="font-semibold">Observações:</Label>
+                                                        <p className="text-gray-700 whitespace-pre-wrap">
+                                                          {atividade.observacoes}
+                                                        </p>
+                                                      </div>
+                                                    )}
+                                                  </div>
+
+                                                  {Object.entries(atividade.detalhesDiarios).length > 0 && (
+                                                    <div className="mt-4 border-t pt-4">
+                                                      <Label className="font-semibold block mb-2">
+                                                        Detalhes Diários:
+                                                      </Label>
+                                                      <div className="space-y-3">
+                                                        {Object.entries(atividade.detalhesDiarios).map(
+                                                          ([dateString, details]) => (
+                                                            <div
+                                                              key={dateString}
+                                                              className="border rounded p-3 bg-white"
+                                                            >
+                                                              <p className="font-medium text-xs text-blue-600 mb-2">
+                                                                {format(new Date(dateString), "PPP", { locale: ptBR })}
+                                                              </p>
+                                                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                                                {details.timeSlot && (
+                                                                  <div>
+                                                                    <span className="font-medium">Horário:</span>{" "}
+                                                                    {details.timeSlot}
+                                                                  </div>
+                                                                )}
+                                                                {details.perfilTipo && (
+                                                                  <div>
+                                                                    <span className="font-medium">Perfil:</span>{" "}
+                                                                    {details.perfilTipo}
+                                                                  </div>
+                                                                )}
+                                                                {details.kmsInicio && (
+                                                                  <div>
+                                                                    <span className="font-medium">Km Início:</span>{" "}
+                                                                    {details.kmsInicio}
+                                                                  </div>
+                                                                )}
+                                                                {details.kmsFim && (
+                                                                  <div>
+                                                                    <span className="font-medium">Km Fim:</span>{" "}
+                                                                    {details.kmsFim}
+                                                                  </div>
+                                                                )}
+                                                                {details.responsavelNome && (
+                                                                  <div>
+                                                                    <span className="font-medium">Responsável:</span>{" "}
+                                                                    {details.responsavelNome}
+                                                                  </div>
+                                                                )}
+                                                                {details.responsavelContacto && (
+                                                                  <div>
+                                                                    <span className="font-medium">Contacto:</span>{" "}
+                                                                    {details.responsavelContacto}
+                                                                  </div>
+                                                                )}
+                                                              </div>
+                                                            </div>
+                                                          ),
+                                                        )}
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              </AccordionContent>
+                                            </AccordionItem>
+                                          ))}
+                                        </Accordion>
                                       )}
                                     </div>
                                   </div>
 
                                   <DialogFooter>
-                                    <div className="flex justify-between w-full">
-                                      <div>
-                                        {selectedPlanForDetails?.tipo === "Manutenção Vegetal" &&
-                                          userRole === "prestador" && (
-                                            <Button
-                                              variant="outline"
-                                              onClick={() => {
-                                                handleEditPlan(selectedPlanForDetails)
-                                                setSelectedPlanForDetails(null)
-                                              }}
-                                            >
-                                              Editar
-                                            </Button>
-                                          )}
-                                      </div>
-                                      <Button onClick={() => setSelectedPlanForDetails(null)}>Fechar</Button>
-                                    </div>
+                                    <Button onClick={() => setSelectedPlanForDetails(null)}>Fechar</Button>
                                   </DialogFooter>
                                 </DialogContent>
                               )}
@@ -1330,7 +1572,7 @@ export default function ServiceSchedulerApp() {
                                 openConfirmationDialog(
                                   "approve",
                                   plan.id,
-                                  plan.descricaoGeral || `Plano de ${plan.tipo} (Nº: ${plan.numero || "N/A"})`,
+                                  `${plan.autoEstrada || "..."} - ${plan.numero || "..."} - ${plan.tipoTrabalho || "..."}`,
                                 )
                               }
                               className="bg-green-500 hover:bg-green-600 text-white"
@@ -1343,7 +1585,7 @@ export default function ServiceSchedulerApp() {
                                 openConfirmationDialog(
                                   "reject",
                                   plan.id,
-                                  plan.descricaoGeral || `Plano de ${plan.tipo} (Nº: ${plan.numero || "N/A"})`,
+                                  `${plan.autoEstrada || "..."} - ${plan.numero || "..."} - ${plan.tipoTrabalho || "..."}`,
                                 )
                               }
                             >
@@ -1353,6 +1595,267 @@ export default function ServiceSchedulerApp() {
                         </div>
                       ))
                   )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="calendario">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <CalendarIcon className="w-5 h-5 text-blue-600" />
+                    <span>Calendário de Planos</span>
+                  </CardTitle>
+                  <CardDescription>Visualização mensal dos planos de trabalho agendados.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {/* Filters */}
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    <div className="flex-1">
+                      <Label htmlFor="filter-tipo-trabalho">Tipo de Trabalho</Label>
+                      <Select value={calendarFilterTipoTrabalho} onValueChange={setCalendarFilterTipoTrabalho}>
+                        <SelectTrigger id="filter-tipo-trabalho">
+                          <SelectValue placeholder="Todos" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos</SelectItem>
+                          {getUniqueWorkTypes().map((type) => (
+                            <SelectItem key={type} value={type}>
+                              {type}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex-1">
+                      <Label htmlFor="filter-status">Status</Label>
+                      <Select value={calendarFilterPeriod} onValueChange={setCalendarFilterPeriod}>
+                        <SelectTrigger id="filter-status">
+                          <SelectValue placeholder="Todos" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos</SelectItem>
+                          <SelectItem value="Pendente Confirmação">Pendente Confirmação</SelectItem>
+                          <SelectItem value="Confirmado">Confirmado</SelectItem>
+                          <SelectItem value="Rejeitado">Rejeitado</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Month Navigation */}
+                  <div className="flex items-center justify-between border-b pb-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentCalendarMonth(subMonths(currentCalendarMonth, 1))}
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </Button>
+                    <h3 className="text-lg font-semibold capitalize">
+                      {format(currentCalendarMonth, "MMMM yyyy", { locale: ptBR })}
+                    </h3>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentCalendarMonth(addMonths(currentCalendarMonth, 1))}
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </Button>
+                  </div>
+
+                  {/* Calendar Grid */}
+                  <div className="grid grid-cols-7 gap-2">
+                    {/* Day headers */}
+                    {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((day) => (
+                      <div key={day} className="text-center font-semibold text-sm text-gray-600 py-2">
+                        {day}
+                      </div>
+                    ))}
+
+                    {/* Calendar days */}
+                    {eachDayOfInterval({
+                      start: startOfWeek(startOfMonth(currentCalendarMonth), { locale: ptBR }),
+                      end: endOfMonth(currentCalendarMonth),
+                    }).map((day, index) => {
+                      const plansForDay = getPlansForDate(day).filter((plan) => {
+                        if (calendarFilterPeriod === "all") return true
+                        return plan.status === calendarFilterPeriod
+                      })
+                      const isCurrentMonth = isSameMonth(day, currentCalendarMonth)
+
+                      return (
+                        <div
+                          key={index}
+                          className={`min-h-[120px] border rounded-lg p-2 ${
+                            isCurrentMonth ? "bg-white" : "bg-gray-50"
+                          }`}
+                        >
+                          <div
+                            className={`text-sm font-medium mb-2 ${isCurrentMonth ? "text-gray-900" : "text-gray-400"}`}
+                          >
+                            {format(day, "d")}
+                          </div>
+                          <div className="space-y-1">
+                            {plansForDay.slice(0, 2).map((plan) => (
+                              <Dialog key={plan.id}>
+                                <DialogTrigger asChild>
+                                  <div
+                                    className={`text-xs p-2 rounded border cursor-pointer hover:shadow-md transition-shadow ${getStatusColor(plan.status)}`}
+                                  >
+                                    <div className="font-semibold truncate">
+                                      {plan.autoEstrada || "..."} - {plan.numero || "..."}
+                                    </div>
+                                    <div className="text-xs truncate">{plan.tipoTrabalho || "..."}</div>
+                                  </div>
+                                </DialogTrigger>
+                                <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
+                                  <DialogHeader>
+                                    <DialogTitle>
+                                      {plan.autoEstrada || "..."} - {plan.numero || "..."} -{" "}
+                                      {plan.tipoTrabalho || "..."}
+                                    </DialogTitle>
+                                    <DialogDescription>Detalhes do plano de trabalho</DialogDescription>
+                                  </DialogHeader>
+
+                                  <div className="space-y-4 py-4 text-sm">
+                                    <div className="grid grid-cols-1 gap-4">
+                                      <div className="flex flex-col space-y-2">
+                                        <Label className="font-semibold">Status:</Label>
+                                        <Badge
+                                          className="w-fit"
+                                          variant={
+                                            plan.status === "Pendente Confirmação"
+                                              ? "outline"
+                                              : plan.status === "Confirmado"
+                                                ? "default"
+                                                : "destructive"
+                                          }
+                                        >
+                                          {plan.status}
+                                        </Badge>
+                                      </div>
+
+                                      <div className="flex flex-col space-y-2">
+                                        <Label className="font-semibold">Tipo:</Label>
+                                        <span className="text-gray-700">{plan.tipo}</span>
+                                      </div>
+
+                                      <div className="flex flex-col space-y-2">
+                                        <Label className="font-semibold">Sublanço:</Label>
+                                        <span className="text-gray-700">{plan.numero || "N/A"}</span>
+                                      </div>
+
+                                      {plan.kmInicial && (
+                                        <div className="flex flex-col space-y-2">
+                                          <Label className="font-semibold">Km Inicial:</Label>
+                                          <span className="text-gray-700">{plan.kmInicial}</span>
+                                        </div>
+                                      )}
+
+                                      {plan.kmFinal && (
+                                        <div className="flex flex-col space-y-2">
+                                          <Label className="font-semibold">Km Final:</Label>
+                                          <span className="text-gray-700">{plan.kmFinal}</span>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    <div className="border-t pt-4">
+                                      <h5 className="text-lg font-semibold mb-4">
+                                        Atividades ({plan.atividades.length}):
+                                      </h5>
+                                      {plan.atividades.length === 0 ? (
+                                        <p className="text-gray-500">Nenhuma atividade adicionada.</p>
+                                      ) : (
+                                        <Accordion type="single" collapsible className="w-full">
+                                          {plan.atividades.map((atividade, index) => (
+                                            <AccordionItem key={atividade.id} value={atividade.id}>
+                                              <AccordionTrigger>
+                                                Atividade {index + 1}: {atividade.descricaoAtividade.substring(0, 50)}
+                                                {atividade.descricaoAtividade.length > 50 && "..."}
+                                              </AccordionTrigger>
+                                              <AccordionContent>
+                                                <div className="p-4 space-y-3 bg-gray-50 rounded-lg">
+                                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                                                    <div>
+                                                      <Label className="font-semibold">Descrição:</Label>
+                                                      <p className="text-gray-700">{atividade.descricaoAtividade}</p>
+                                                    </div>
+                                                    <div>
+                                                      <Label className="font-semibold">Período:</Label>
+                                                      <p className="text-gray-700">
+                                                        {atividade.periodo.from && atividade.periodo.to
+                                                          ? `${format(atividade.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(atividade.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
+                                                          : "N/A"}
+                                                      </p>
+                                                    </div>
+                                                    {atividade.pkInicial && (
+                                                      <div>
+                                                        <Label className="font-semibold">Pk Inicial:</Label>
+                                                        <p className="text-gray-700">{atividade.pkInicial}</p>
+                                                      </div>
+                                                    )}
+                                                    {atividade.pkFinal && (
+                                                      <div>
+                                                        <Label className="font-semibold">Pk Final:</Label>
+                                                        <p className="text-gray-700">{atividade.pkFinal}</p>
+                                                      </div>
+                                                    )}
+                                                    {atividade.sentido && (
+                                                      <div>
+                                                        <Label className="font-semibold">Sentido:</Label>
+                                                        <p className="text-gray-700 capitalize">{atividade.sentido}</p>
+                                                      </div>
+                                                    )}
+                                                    {atividade.perfil && (
+                                                      <div>
+                                                        <Label className="font-semibold">Perfil:</Label>
+                                                        <p className="text-gray-700">{atividade.perfil}</p>
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              </AccordionContent>
+                                            </AccordionItem>
+                                          ))}
+                                        </Accordion>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <DialogFooter>
+                                    <Button variant="outline">Fechar</Button>
+                                  </DialogFooter>
+                                </DialogContent>
+                              </Dialog>
+                            ))}
+                            {plansForDay.length > 2 && (
+                              <div className="text-xs text-gray-500 text-center py-1">
+                                +{plansForDay.length - 2} mais
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Legend */}
+                  <div className="flex flex-wrap gap-4 pt-4 border-t">
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 rounded bg-green-100 border border-green-300"></div>
+                      <span className="text-sm text-gray-600">Confirmado</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 rounded bg-yellow-100 border border-yellow-300"></div>
+                      <span className="text-sm text-gray-600">Pendente Confirmação</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 rounded bg-red-100 border border-red-300"></div>
+                      <span className="text-sm text-gray-600">Rejeitado</span>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -1391,9 +1894,9 @@ export default function ServiceSchedulerApp() {
                           const startDate = startOfWeek(new Date(year, 0, (weekNum - 1) * 7 + 1), {
                             locale: ptBR,
                             weekStartsOn: 1,
-                          }) // Segunda-feira
+                          })
                           const endDate = new Date(startDate)
-                          endDate.setDate(startDate.getDate() + 4) // Sexta-feira
+                          endDate.setDate(startDate.getDate() + 4)
 
                           return (
                             <div
@@ -1415,7 +1918,6 @@ export default function ServiceSchedulerApp() {
                 </CardContent>
               </Card>
 
-              {/* "Todos os Agendamentos" para CCO (apenas aprovados) */}
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
@@ -1443,230 +1945,15 @@ export default function ServiceSchedulerApp() {
                               </div>
                               <div>
                                 <h4 className="font-medium">
-                                  {plan.descricaoGeral || `Plano de ${plan.tipo} (Nº: ${plan.numero || "N/A"})`}
+                                  {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
                                 </h4>
                                 <p className="text-sm text-gray-500">
-                                  Período:{" "}
-                                  {plan.periodo.from && plan.periodo.to
-                                    ? `${format(plan.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(plan.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
-                                    : "Não definido"}
+                                  {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
                                 </p>
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <Badge
-                                variant={
-                                  plan.status === "Pendente Confirmação"
-                                    ? "outline"
-                                    : plan.status === "Confirmado"
-                                      ? "default"
-                                      : "destructive"
-                                }
-                              >
-                                {plan.status}
-                              </Badge>
-                              <Dialog onOpenChange={(open) => !open && setSelectedPlanForDetails(null)}>
-                                <DialogTrigger asChild>
-                                  <Button variant="link" size="sm" onClick={() => setSelectedPlanForDetails(plan)}>
-                                    Ver Detalhes
-                                  </Button>
-                                </DialogTrigger>
-                                {selectedPlanForDetails && (
-                                  <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
-                                    <DialogHeader>
-                                      <DialogTitle>Detalhes do Plano: {selectedPlanForDetails.numero}</DialogTitle>
-                                      <DialogDescription>
-                                        Resumo completo do plano de trabalho submetido.
-                                      </DialogDescription>
-
-                                      {/* Comentário do GO no cabeçalho */}
-                                      {selectedPlanForDetails.comentarioGO && (
-                                        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                                          <Label className="text-sm font-semibold text-red-800 block mb-1">
-                                            Comentário do Gestor de Operações:
-                                          </Label>
-                                          <p className="text-sm text-red-700">{selectedPlanForDetails.comentarioGO}</p>
-                                        </div>
-                                      )}
-                                    </DialogHeader>
-
-                                    <div className="space-y-4 py-4 text-sm">
-                                      <div className="grid grid-cols-1 gap-4">
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Tipo:</Label>
-                                          <span className="text-gray-700">{selectedPlanForDetails.tipo}</span>
-                                        </div>
-
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Nº:</Label>
-                                          <span className="text-gray-700">
-                                            {selectedPlanForDetails.numero || "N/A"}
-                                          </span>
-                                        </div>
-
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Descrição Geral:</Label>
-                                          <span className="text-gray-700">
-                                            {selectedPlanForDetails.descricaoGeral || "N/A"}
-                                          </span>
-                                        </div>
-
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Período:</Label>
-                                          <span className="text-gray-700">
-                                            {selectedPlanForDetails.periodo.from && selectedPlanForDetails.periodo.to
-                                              ? `${format(selectedPlanForDetails.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(selectedPlanForDetails.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
-                                              : "Não definido"}
-                                          </span>
-                                        </div>
-
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Status:</Label>
-                                          <Badge
-                                            className="w-fit"
-                                            variant={
-                                              selectedPlanForDetails.status === "Pendente Confirmação"
-                                                ? "outline"
-                                                : selectedPlanForDetails.status === "Confirmado"
-                                                  ? "default"
-                                                  : "destructive"
-                                            }
-                                          >
-                                            {selectedPlanForDetails.status}
-                                          </Badge>
-                                        </div>
-                                      </div>
-
-                                      <div className="border-t pt-4">
-                                        <h5 className="text-lg font-semibold mb-4">Detalhes Diários:</h5>
-                                        {Object.entries(selectedPlanForDetails.detalhesDiarios).length === 0 ? (
-                                          <p className="text-gray-500">Nenhum detalhe diário preenchido.</p>
-                                        ) : (
-                                          <div className="space-y-6">
-                                            {Object.entries(selectedPlanForDetails.detalhesDiarios).map(
-                                              ([dateString, details]) => (
-                                                <div key={dateString} className="border rounded-lg p-4 bg-gray-50">
-                                                  <h6 className="font-medium text-md mb-3 text-blue-600">
-                                                    Dia: {format(new Date(dateString), "PPP", { locale: ptBR })}
-                                                  </h6>
-                                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                    <div className="flex flex-col space-y-1">
-                                                      <Label className="text-xs font-medium text-gray-600">
-                                                        Horário:
-                                                      </Label>
-                                                      <span className="text-sm">{details.timeSlot || "N/A"}</span>
-                                                    </div>
-
-                                                    <div className="flex flex-col space-y-1">
-                                                      <Label className="text-xs font-medium text-gray-600">
-                                                        Perfil Tipo:
-                                                      </Label>
-                                                      <span className="text-sm">{details.perfilTipo || "N/A"}</span>
-                                                    </div>
-
-                                                    <div className="flex flex-col space-y-1">
-                                                      <Label className="text-xs font-medium text-gray-600">
-                                                        Tipo Trabalho:
-                                                      </Label>
-                                                      <span className="text-sm">
-                                                        {details.tipoTrabalho?.join(", ") || "N/A"}
-                                                      </span>
-                                                    </div>
-
-                                                    <div className="flex flex-col space-y-1">
-                                                      <Label className="text-xs font-medium text-gray-600">
-                                                        Km's Início:
-                                                      </Label>
-                                                      <span className="text-sm">{details.kmsInicio || "N/A"}</span>
-                                                    </div>
-
-                                                    <div className="flex flex-col space-y-1">
-                                                      <Label className="text-xs font-medium text-gray-600">
-                                                        Km's Fim:
-                                                      </Label>
-                                                      <span className="text-sm">{details.kmsFim || "N/A"}</span>
-                                                    </div>
-
-                                                    <div className="flex flex-col space-y-1">
-                                                      <Label className="text-xs font-medium text-gray-600">
-                                                        Sentido:
-                                                      </Label>
-                                                      <span className="text-sm">
-                                                        {details.sentido?.join(", ") || "N/A"}
-                                                      </span>
-                                                    </div>
-
-                                                    <div className="flex flex-col space-y-1">
-                                                      <Label className="text-xs font-medium text-gray-600">Vias:</Label>
-                                                      <span className="text-sm">
-                                                        {details.vias?.join(", ") || "N/A"}
-                                                      </span>
-                                                    </div>
-
-                                                    <div className="flex flex-col space-y-1">
-                                                      <Label className="text-xs font-medium text-gray-600">
-                                                        Esq/Refª:
-                                                      </Label>
-                                                      <span className="text-sm">{details.esqRef || "N/A"}</span>
-                                                    </div>
-
-                                                    <div className="flex flex-col space-y-1">
-                                                      <Label className="text-xs font-medium text-gray-600">
-                                                        Outros Locais:
-                                                      </Label>
-                                                      <span className="text-sm">
-                                                        {details.outrosLocais?.join(", ") || "N/A"}
-                                                      </span>
-                                                    </div>
-
-                                                    <div className="flex flex-col space-y-1">
-                                                      <Label className="text-xs font-medium text-gray-600">
-                                                        Responsável:
-                                                      </Label>
-                                                      <span className="text-sm">
-                                                        {details.responsavelNome || "N/A"}
-                                                      </span>
-                                                    </div>
-
-                                                    <div className="flex flex-col space-y-1">
-                                                      <Label className="text-xs font-medium text-gray-600">
-                                                        Contacto:
-                                                      </Label>
-                                                      <span className="text-sm">
-                                                        {details.responsavelContacto || "N/A"}
-                                                      </span>
-                                                    </div>
-                                                  </div>
-                                                </div>
-                                              ),
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    <DialogFooter>
-                                      <div className="flex justify-between w-full">
-                                        <div>
-                                          {selectedPlanForDetails?.tipo === "Manutenção Vegetal" &&
-                                            userRole === "prestador" && (
-                                              <Button
-                                                variant="outline"
-                                                onClick={() => {
-                                                  handleEditPlan(selectedPlanForDetails)
-                                                  setSelectedPlanForDetails(null)
-                                                }}
-                                              >
-                                                Editar
-                                              </Button>
-                                            )}
-                                        </div>
-                                        <Button onClick={() => setIsWeeklyPlansDialogOpen(false)}>Fechar</Button>
-                                      </div>
-                                    </DialogFooter>
-                                  </DialogContent>
-                                )}
-                              </Dialog>
+                              <Badge variant="default">{plan.status}</Badge>
                               <Button
                                 variant={plan.isInISistema ? "default" : "destructive"}
                                 className={
@@ -1687,7 +1974,6 @@ export default function ServiceSchedulerApp() {
           </Tabs>
         )}
 
-        {/* Todos os Agendamentos (visível para prestador e GO) */}
         {userRole !== "cco" && userRole !== "admin" && (
           <Card className="mt-8">
             <CardHeader>
@@ -1711,15 +1997,11 @@ export default function ServiceSchedulerApp() {
                         </div>
                         <div>
                           <h4 className="font-medium">
-                            {plan.descricaoGeral || `Plano de ${plan.tipo} (Nº: ${plan.numero || "N/A"})`}
+                            {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
                           </h4>
                           <p className="text-sm text-gray-500">
-                            Período:{" "}
-                            {plan.periodo.from && plan.periodo.to
-                              ? `${format(plan.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(plan.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
-                              : "Não definido"}
+                            {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
                           </p>
-                          {/* Mostrar comentário do GO se existir */}
                           {plan.comentarioGO && (
                             <p className="text-sm text-red-600 mt-1">
                               <strong>Comentário GO:</strong> {plan.comentarioGO}
@@ -1727,199 +2009,17 @@ export default function ServiceSchedulerApp() {
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant={
-                            plan.status === "Pendente Confirmação"
-                              ? "outline"
-                              : plan.status === "Confirmado"
-                                ? "default"
-                                : "destructive"
-                          }
-                        >
-                          {plan.status}
-                        </Badge>
-                        <Dialog onOpenChange={(open) => !open && setSelectedPlanForDetails(null)}>
-                          <DialogTrigger asChild>
-                            <Button variant="link" size="sm" onClick={() => setSelectedPlanForDetails(plan)}>
-                              Ver Detalhes
-                            </Button>
-                          </DialogTrigger>
-                          {selectedPlanForDetails && (
-                            <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
-                              <DialogHeader>
-                                <DialogTitle>Detalhes do Plano: {selectedPlanForDetails.numero}</DialogTitle>
-                                <DialogDescription>Resumo completo do plano de trabalho submetido.</DialogDescription>
-
-                                {/* Comentário do GO no cabeçalho */}
-                                {selectedPlanForDetails.comentarioGO && (
-                                  <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                                    <Label className="text-sm font-semibold text-red-800 block mb-1">
-                                      Comentário do Gestor de Operações:
-                                    </Label>
-                                    <p className="text-sm text-red-700">{selectedPlanForDetails.comentarioGO}</p>
-                                  </div>
-                                )}
-                              </DialogHeader>
-
-                              <div className="space-y-4 py-4 text-sm">
-                                <div className="grid grid-cols-1 gap-4">
-                                  <div className="flex flex-col space-y-2">
-                                    <Label className="font-semibold">Tipo:</Label>
-                                    <span className="text-gray-700">{selectedPlanForDetails.tipo}</span>
-                                  </div>
-
-                                  <div className="flex flex-col space-y-2">
-                                    <Label className="font-semibold">Nº:</Label>
-                                    <span className="text-gray-700">{selectedPlanForDetails.numero || "N/A"}</span>
-                                  </div>
-
-                                  <div className="flex flex-col space-y-2">
-                                    <Label className="font-semibold">Descrição Geral:</Label>
-                                    <span className="text-gray-700">
-                                      {selectedPlanForDetails.descricaoGeral || "N/A"}
-                                    </span>
-                                  </div>
-
-                                  <div className="flex flex-col space-y-2">
-                                    <Label className="font-semibold">Período:</Label>
-                                    <span className="text-gray-700">
-                                      {selectedPlanForDetails.periodo.from && selectedPlanForDetails.periodo.to
-                                        ? `${format(selectedPlanForDetails.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(selectedPlanForDetails.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
-                                        : "Não definido"}
-                                    </span>
-                                  </div>
-
-                                  <div className="flex flex-col space-y-2">
-                                    <Label className="font-semibold">Status:</Label>
-                                    <Badge
-                                      className="w-fit"
-                                      variant={
-                                        selectedPlanForDetails.status === "Pendente Confirmação"
-                                          ? "outline"
-                                          : selectedPlanForDetails.status === "Confirmado"
-                                            ? "default"
-                                            : "destructive"
-                                      }
-                                    >
-                                      {selectedPlanForDetails.status}
-                                    </Badge>
-                                  </div>
-                                </div>
-
-                                <div className="border-t pt-4">
-                                  <h5 className="text-lg font-semibold mb-4">Detalhes Diários:</h5>
-                                  {Object.entries(selectedPlanForDetails.detalhesDiarios).length === 0 ? (
-                                    <p className="text-gray-500">Nenhum detalhe diário preenchido.</p>
-                                  ) : (
-                                    <div className="space-y-6">
-                                      {Object.entries(selectedPlanForDetails.detalhesDiarios).map(
-                                        ([dateString, details]) => (
-                                          <div key={dateString} className="border rounded-lg p-4 bg-gray-50">
-                                            <h6 className="font-medium text-md mb-3 text-blue-600">
-                                              Dia: {format(new Date(dateString), "PPP", { locale: ptBR })}
-                                            </h6>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                              <div className="flex flex-col space-y-1">
-                                                <Label className="text-xs font-medium text-gray-600">Horário:</Label>
-                                                <span className="text-sm">{details.timeSlot || "N/A"}</span>
-                                              </div>
-
-                                              <div className="flex flex-col space-y-1">
-                                                <Label className="text-xs font-medium text-gray-600">
-                                                  Perfil Tipo:
-                                                </Label>
-                                                <span className="text-sm">{details.perfilTipo || "N/A"}</span>
-                                              </div>
-
-                                              <div className="flex flex-col space-y-1">
-                                                <Label className="text-xs font-medium text-gray-600">
-                                                  Tipo Trabalho:
-                                                </Label>
-                                                <span className="text-sm">
-                                                  {details.tipoTrabalho?.join(", ") || "N/A"}
-                                                </span>
-                                              </div>
-
-                                              <div className="flex flex-col space-y-1">
-                                                <Label className="text-xs font-medium text-gray-600">
-                                                  Km's Início:
-                                                </Label>
-                                                <span className="text-sm">{details.kmsInicio || "N/A"}</span>
-                                              </div>
-
-                                              <div className="flex flex-col space-y-1">
-                                                <Label className="text-xs font-medium text-gray-600">Km's Fim:</Label>
-                                                <span className="text-sm">{details.kmsFim || "N/A"}</span>
-                                              </div>
-
-                                              <div className="flex flex-col space-y-1">
-                                                <Label className="text-xs font-medium text-gray-600">Sentido:</Label>
-                                                <span className="text-sm">{details.sentido?.join(", ") || "N/A"}</span>
-                                              </div>
-
-                                              <div className="flex flex-col space-y-1">
-                                                <Label className="text-xs font-medium text-gray-600">Vias:</Label>
-                                                <span className="text-sm">{details.vias?.join(", ") || "N/A"}</span>
-                                              </div>
-
-                                              <div className="flex flex-col space-y-1">
-                                                <Label className="text-xs font-medium text-gray-600">Esq/Refª:</Label>
-                                                <span className="text-sm">{details.esqRef || "N/A"}</span>
-                                              </div>
-
-                                              <div className="flex flex-col space-y-1">
-                                                <Label className="text-xs font-medium text-gray-600">
-                                                  Outros Locais:
-                                                </Label>
-                                                <span className="text-sm">
-                                                  {details.outrosLocais?.join(", ") || "N/A"}
-                                                </span>
-                                              </div>
-
-                                              <div className="flex flex-col space-y-1">
-                                                <Label className="text-xs font-medium text-gray-600">
-                                                  Responsável:
-                                                </Label>
-                                                <span className="text-sm">{details.responsavelNome || "N/A"}</span>
-                                              </div>
-
-                                              <div className="flex flex-col space-y-1">
-                                                <Label className="text-xs font-medium text-gray-600">Contacto:</Label>
-                                                <span className="text-sm">{details.responsavelContacto || "N/A"}</span>
-                                              </div>
-                                            </div>
-                                          </div>
-                                        ),
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              <DialogFooter>
-                                <div className="flex justify-between w-full">
-                                  <div>
-                                    {selectedPlanForDetails?.tipo === "Manutenção Vegetal" &&
-                                      userRole === "prestador" && (
-                                        <Button
-                                          variant="outline"
-                                          onClick={() => {
-                                            handleEditPlan(selectedPlanForDetails)
-                                            setSelectedPlanForDetails(null)
-                                          }}
-                                        >
-                                          Editar
-                                        </Button>
-                                      )}
-                                  </div>
-                                  <Button onClick={() => setSelectedPlanForDetails(null)}>Fechar</Button>
-                                </div>
-                              </DialogFooter>
-                            </DialogContent>
-                          )}
-                        </Dialog>
-                      </div>
+                      <Badge
+                        variant={
+                          plan.status === "Pendente Confirmação"
+                            ? "outline"
+                            : plan.status === "Confirmado"
+                              ? "default"
+                              : "destructive"
+                        }
+                      >
+                        {plan.status}
+                      </Badge>
                     </div>
                   ))
                 )}
@@ -1929,7 +2029,6 @@ export default function ServiceSchedulerApp() {
         )}
       </main>
 
-      {/* Notification Dialog */}
       <Dialog
         open={notificationDialog.open}
         onOpenChange={(open) => setNotificationDialog({ ...notificationDialog, open })}
@@ -1945,7 +2044,6 @@ export default function ServiceSchedulerApp() {
         </DialogContent>
       </Dialog>
 
-      {/* Dialog de Confirmação para Aprovação/Rejeição */}
       <Dialog
         open={confirmationDialog.open}
         onOpenChange={(open) => setConfirmationDialog({ ...confirmationDialog, open })}
@@ -1998,7 +2096,6 @@ export default function ServiceSchedulerApp() {
         </DialogContent>
       </Dialog>
 
-      {/* Dialog para Planos da Semana */}
       <Dialog open={isWeeklyPlansDialogOpen} onOpenChange={setIsWeeklyPlansDialogOpen}>
         <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -2019,191 +2116,15 @@ export default function ServiceSchedulerApp() {
                     </div>
                     <div>
                       <h4 className="font-medium">
-                        {plan.descricaoGeral || `Plano de ${plan.tipo} (Nº: ${plan.numero || "N/A"})`}
+                        {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
                       </h4>
                       <p className="text-sm text-gray-500">
-                        Período:{" "}
-                        {plan.periodo.from && plan.periodo.to
-                          ? `${format(plan.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(plan.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
-                          : "Não definido"}
+                        {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge
-                      variant={
-                        plan.status === "Pendente Confirmação"
-                          ? "outline"
-                          : plan.status === "Confirmado"
-                            ? "default"
-                            : "destructive"
-                      }
-                    >
-                      {plan.status}
-                    </Badge>
-                    <Dialog onOpenChange={(open) => !open && setSelectedPlanForDetails(null)}>
-                      <DialogTrigger asChild>
-                        <Button variant="link" size="sm" onClick={() => setSelectedPlanForDetails(plan)}>
-                          Ver Detalhes
-                        </Button>
-                      </DialogTrigger>
-                      {selectedPlanForDetails && (
-                        <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
-                          <DialogHeader>
-                            <DialogTitle>Detalhes do Plano: {selectedPlanForDetails.numero}</DialogTitle>
-                            <DialogDescription>Resumo completo do plano de trabalho submetido.</DialogDescription>
-
-                            {/* Comentário do GO no cabeçalho */}
-                            {selectedPlanForDetails.comentarioGO && (
-                              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                                <Label className="text-sm font-semibold text-red-800 block mb-1">
-                                  Comentário do Gestor de Operações:
-                                </Label>
-                                <p className="text-sm text-red-700">{selectedPlanForDetails.comentarioGO}</p>
-                              </div>
-                            )}
-                          </DialogHeader>
-
-                          <div className="space-y-4 py-4 text-sm">
-                            <div className="grid grid-cols-1 gap-4">
-                              <div className="flex flex-col space-y-2">
-                                <Label className="font-semibold">Tipo:</Label>
-                                <span className="text-gray-700">{selectedPlanForDetails.tipo}</span>
-                              </div>
-
-                              <div className="flex flex-col space-y-2">
-                                <Label className="font-semibold">Nº:</Label>
-                                <span className="text-gray-700">{selectedPlanForDetails.numero || "N/A"}</span>
-                              </div>
-
-                              <div className="flex flex-col space-y-2">
-                                <Label className="font-semibold">Descrição Geral:</Label>
-                                <span className="text-gray-700">{selectedPlanForDetails.descricaoGeral || "N/A"}</span>
-                              </div>
-
-                              <div className="flex flex-col space-y-2">
-                                <Label className="font-semibold">Período:</Label>
-                                <span className="text-gray-700">
-                                  {selectedPlanForDetails.periodo.from && selectedPlanForDetails.periodo.to
-                                    ? `${format(selectedPlanForDetails.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(selectedPlanForDetails.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
-                                    : "Não definido"}
-                                </span>
-                              </div>
-
-                              <div className="flex flex-col space-y-2">
-                                <Label className="font-semibold">Status:</Label>
-                                <Badge
-                                  className="w-fit"
-                                  variant={
-                                    selectedPlanForDetails.status === "Pendente Confirmação"
-                                      ? "outline"
-                                      : selectedPlanForDetails.status === "Confirmado"
-                                        ? "default"
-                                        : "destructive"
-                                  }
-                                >
-                                  {selectedPlanForDetails.status}
-                                </Badge>
-                              </div>
-                            </div>
-
-                            <div className="border-t pt-4">
-                              <h5 className="text-lg font-semibold mb-4">Detalhes Diários:</h5>
-                              {Object.entries(selectedPlanForDetails.detalhesDiarios).length === 0 ? (
-                                <p className="text-gray-500">Nenhum detalhe diário preenchido.</p>
-                              ) : (
-                                <div className="space-y-6">
-                                  {Object.entries(selectedPlanForDetails.detalhesDiarios).map(
-                                    ([dateString, details]) => (
-                                      <div key={dateString} className="border rounded-lg p-4 bg-gray-50">
-                                        <h6 className="font-medium text-md mb-3 text-blue-600">
-                                          Dia: {format(new Date(dateString), "PPP", { locale: ptBR })}
-                                        </h6>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                          <div className="flex flex-col space-y-1">
-                                            <Label className="text-xs font-medium text-gray-600">Horário:</Label>
-                                            <span className="text-sm">{details.timeSlot || "N/A"}</span>
-                                          </div>
-
-                                          <div className="flex flex-col space-y-1">
-                                            <Label className="text-xs font-medium text-gray-600">Perfil Tipo:</Label>
-                                            <span className="text-sm">{details.perfilTipo || "N/A"}</span>
-                                          </div>
-
-                                          <div className="flex flex-col space-y-1">
-                                            <Label className="text-xs font-medium text-gray-600">Tipo Trabalho:</Label>
-                                            <span className="text-sm">{details.tipoTrabalho?.join(", ") || "N/A"}</span>
-                                          </div>
-
-                                          <div className="flex flex-col space-y-1">
-                                            <Label className="text-xs font-medium text-gray-600">Km's Início:</Label>
-                                            <span className="text-sm">{details.kmsInicio || "N/A"}</span>
-                                          </div>
-
-                                          <div className="flex flex-col space-y-1">
-                                            <Label className="text-xs font-medium text-gray-600">Km's Fim:</Label>
-                                            <span className="text-sm">{details.kmsFim || "N/A"}</span>
-                                          </div>
-
-                                          <div className="flex flex-col space-y-1">
-                                            <Label className="text-xs font-medium text-gray-600">Sentido:</Label>
-                                            <span className="text-sm">{details.sentido?.join(", ") || "N/A"}</span>
-                                          </div>
-
-                                          <div className="flex flex-col space-y-1">
-                                            <Label className="text-xs font-medium text-gray-600">Vias:</Label>
-                                            <span className="text-sm">{details.vias?.join(", ") || "N/A"}</span>
-                                          </div>
-
-                                          <div className="flex flex-col space-y-1">
-                                            <Label className="text-xs font-medium text-gray-600">Esq/Refª:</Label>
-                                            <span className="text-sm">{details.esqRef || "N/A"}</span>
-                                          </div>
-
-                                          <div className="flex flex-col space-y-1">
-                                            <Label className="text-xs font-medium text-gray-600">Outros Locais:</Label>
-                                            <span className="text-sm">{details.outrosLocais?.join(", ") || "N/A"}</span>
-                                          </div>
-
-                                          <div className="flex flex-col space-y-1">
-                                            <Label className="text-xs font-medium text-gray-600">Responsável:</Label>
-                                            <span className="text-sm">{details.responsavelNome || "N/A"}</span>
-                                          </div>
-
-                                          <div className="flex flex-col space-y-1">
-                                            <Label className="text-xs font-medium text-gray-600">Contacto:</Label>
-                                            <span className="text-sm">{details.responsavelContacto || "N/A"}</span>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    ),
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          <DialogFooter>
-                            <div className="flex justify-between w-full">
-                              <div>
-                                {selectedPlanForDetails?.tipo === "Manutenção Vegetal" && userRole === "prestador" && (
-                                  <Button
-                                    variant="outline"
-                                    onClick={() => {
-                                      handleEditPlan(selectedPlanForDetails)
-                                      setSelectedPlanForDetails(null)
-                                    }}
-                                  >
-                                    Editar
-                                  </Button>
-                                )}
-                              </div>
-                              <Button onClick={() => setIsWeeklyPlansDialogOpen(false)}>Fechar</Button>
-                            </div>
-                          </DialogFooter>
-                        </DialogContent>
-                      )}
-                    </Dialog>
+                    <Badge variant="default">{plan.status}</Badge>
                     <Button
                       variant={plan.isInISistema ? "default" : "destructive"}
                       className={plan.isInISistema ? "bg-green-500 hover:bg-green-600" : "bg-red-500 hover:bg-red-600"}
