@@ -14,7 +14,6 @@ import {
   Wrench,
   User,
   LogOut,
-  LayoutDashboard,
   Plus,
   Trash2,
   Edit,
@@ -39,6 +38,8 @@ import {
   isSameDay,
   addMonths,
   subMonths,
+  isBefore,
+  startOfDay,
 } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import {
@@ -53,6 +54,7 @@ import {
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import AdminDashboard from "@/components/admin-dashboard"
 import { AutoEstradasSelect } from "@/components/auto-estradas-select"
+import type { DateRange as DayPickerDateRange } from "react-day-picker" // Renamed import to avoid conflict
 
 // Tipagem para o intervalo de datas
 interface DateRange {
@@ -60,13 +62,33 @@ interface DateRange {
   to?: Date
 }
 
+interface DayData {
+  date: Date
+  horaInicio: string
+  horaFim: string
+  todoDia: boolean
+  pkInicialKm: string
+  pkInicialMeters: string
+  pkFinalKm: string
+  pkFinalMeters: string
+  sentido: string
+  perfil: string
+  tipoTrabalhoDay: string
+  localIntervencao: string
+  restricoes: string
+  esquema: string
+  observacoes: string
+}
+
 // Tipagem para uma atividade
 interface Atividade {
   id: string
   descricaoAtividade: string
   periodo: DateRange
-  pkInicial: string
-  pkFinal: string
+  pkInicialKm: string
+  pkInicialMeters: string
+  pkFinalKm: string
+  pkFinalMeters: string
   sentido: string
   perfil: string
   localIntervencao: string
@@ -96,7 +118,9 @@ interface SubmittedPlan {
   id: string
   numero: string
   tipoTrabalho: string
+  atividade?: string // Added atividade field
   autoEstrada?: string // Added autoEstrada field to SubmittedPlan interface
+  concessao?: string // Added concessao field
   atividades: Atividade[]
   status: "Pendente Confirmação" | "Confirmado" | "Rejeitado"
   tipo: "Manutenção Vegetal" | "Beneficiação de Pavimento" | "Manutenção Geral"
@@ -104,15 +128,64 @@ interface SubmittedPlan {
   comentarioGO?: string
   kmInicial?: string
   kmFinal?: string
-  trabalhoFixo?: boolean
-  trabalhoMovel?: boolean
+  trabalhoFixo: boolean
+  trabalhoMovel: boolean
+  perigosTemporarios: boolean
   fiscalizacaoNome?: string
   fiscalizacaoContato?: string
   entidadeExecutanteNome?: string
   entidadeExecutanteContato?: string
   sinalizacaoNome?: string
   sinalizacaoContato?: string
-  concessao?: string // Added concessao field to SubmittedPlan interface
+}
+
+function calculateEaster(year: number): Date {
+  const f = Math.floor
+  const G = year % 19
+  const C = f(year / 100)
+  const H = (C - f(C / 4) - f((8 * C + 13) / 25) + 19 * G + 15) % 30
+  const I = H - f(H / 28) * (1 - f(29 / (H + 1)) * f((21 - G) / 11))
+  const J = (year + f(year / 4) + I + 2 - C + f(C / 4)) % 7
+  const L = I - J
+  const month = 3 + f((L + 40) / 44)
+  const day = L + 28 - 31 * f(month / 4)
+  return new Date(year, month - 1, day)
+}
+
+function getPortugueseHolidays(year: number): Date[] {
+  const easter = calculateEaster(year)
+  const holidays: Date[] = [
+    new Date(year, 0, 1), // Ano Novo
+    new Date(year, 3, 25), // Dia da Liberdade
+    new Date(year, 4, 1), // Dia do Trabalhador
+    new Date(year, 5, 10), // Dia de Portugal
+    new Date(year, 7, 15), // Assunção de Nossa Senhora
+    new Date(year, 9, 5), // Implantação da República
+    new Date(year, 10, 1), // Todos os Santos
+    new Date(year, 11, 1), // Restauração da Independência
+    new Date(year, 11, 8), // Imaculada Conceição
+    new Date(year, 11, 25), // Natal
+  ]
+
+  // Add variable holidays based on Easter
+  const carnival = new Date(easter)
+  carnival.setDate(easter.getDate() - 47) // Carnaval (47 days before Easter)
+
+  const goodFriday = new Date(easter)
+  goodFriday.setDate(easter.getDate() - 2) // Sexta-feira Santa
+
+  const corpusChristi = new Date(easter)
+  corpusChristi.setDate(easter.getDate() + 60) // Corpo de Deus
+
+  holidays.push(carnival, goodFriday, corpusChristi)
+
+  return holidays
+}
+
+function isPortugueseHoliday(date: Date): boolean {
+  const year = date.getFullYear()
+  const holidays = getPortugueseHolidays(year)
+  return holidays.some((holiday) => isSameDay(holiday, date))
 }
 
 export default function ServiceSchedulerApp() {
@@ -120,12 +193,15 @@ export default function ServiceSchedulerApp() {
   const [loginData, setLoginData] = useState({ email: "", password: "" })
   const [user, setUser] = useState({ name: "", email: "" })
   const [userRole, setUserRole] = useState<"prestador" | "go" | "cco" | "admin" | null>(null)
-  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined)
+  const [dateRange, setDateRange] = useState<DayPickerDateRange | undefined>(undefined) // Used DayPickerDateRange here
   const [dailyDetails, setDailyDetails] = useState<{ [dateString: string]: DailyDetail }>({})
-  const [isUrgente, setIsUrgente] = useState(false)
+  const [isUrgente, setIsUrgente] = useState(false) // Changed from isUrgente to setIsUrgente for consistency with other setters
+
+  const [dayDataMap, setDayDataMap] = useState<{ [dateString: string]: DayData }>({})
 
   const [vegetalNumero, setVegetalNumero] = useState("")
   const [tipoTrabalho, setTipoTrabalho] = useState("")
+  const [atividade, setAtividade] = useState("")
   const [descricaoAtividade, setDescricaoAtividade] = useState("")
   const [submittedPlans, setSubmittedPlans] = useState<SubmittedPlan[]>([])
   const [selectedPlanForDetails, setSelectedPlanForDetails] = useState<SubmittedPlan | null>(null)
@@ -133,18 +209,26 @@ export default function ServiceSchedulerApp() {
   const [editingPlanId, setEditingPlanId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState("vegetal")
   const [autoEstrada, setAutoEstrada] = useState("")
+  const [concessao, setConcessao] = useState("") // Added concessao state
   const [kmInicial, setKmInicial] = useState("")
   const [kmFinal, setKmFinal] = useState("")
-  const [pkInicial, setPkInicial] = useState("")
-  const [pkFinal, setPkFinal] = useState("")
+  const [pkInicial, setPkInicial] = useState("") // This state will now be split
+  const [pkFinal, setPkFinal] = useState("") // This state will now be split
   const [sentido, setSentido] = useState("")
   const [perfil, setPerfil] = useState("")
   const [trabalhoFixo, setTrabalhoFixo] = useState(false)
   const [trabalhoMovel, setTrabalhoMovel] = useState(false)
+  const [perigosTemporarios, setPerigosTemporarios] = useState(false)
   const [localIntervencao, setLocalIntervencao] = useState("")
   const [restricoes, setRestricoes] = useState("")
   const [esquema, setEsquema] = useState("")
   const [observacoes, setObservacoes] = useState("")
+
+  // State for PK initial and final (split into km and meters)
+  const [pkInicialKm, setPkInicialKm] = useState("")
+  const [pkInicialMeters, setPkInicialMeters] = useState("")
+  const [pkFinalKm, setPkFinalKm] = useState("")
+  const [pkFinalMeters, setPkFinalMeters] = useState("")
 
   // Estado para lista de atividades
   const [atividades, setAtividades] = useState<Atividade[]>([])
@@ -190,37 +274,26 @@ export default function ServiceSchedulerApp() {
   const [calendarFilterPeriod, setCalendarFilterPeriod] = useState<string>("all")
   const [calendarFilterTipoTrabalho, setCalendarFilterTipoTrabalho] = useState<string>("all")
 
-  const [concessao, setConcessao] = useState("")
-  const [concessoes, setConcessoes] = useState<string[]>([])
+  const [concessoes, setConcessoes] = useState<Array<{ value: string; label: string }>>([])
 
   useEffect(() => {
     const loadConcessoes = async () => {
       try {
-        // Try to fetch from GitHub first
-        const response = await fetch(
-          "https://raw.githubusercontent.com/rpgbae/Planos-Trabalho/main/public/concessoes.json",
-        )
-        if (response.ok) {
-          const data = await response.json()
-          setConcessoes(Array.isArray(data) ? data : [])
-        } else {
-          // Fallback to local file
-          const localResponse = await fetch("/data/concessoes.json")
-          const localData = await localResponse.json()
-          setConcessoes(Array.isArray(localData) ? localData : [])
+        const response = await fetch("/data/concessoes.json")
+        if (!response.ok) {
+          throw new Error("Failed to load concessoes")
         }
+        const data: string[] = await response.json()
+        const formattedData = data.map((item) => ({
+          value: item,
+          label: item,
+        }))
+        setConcessoes(formattedData)
       } catch (error) {
         console.error("Erro ao carregar concessões:", error)
-        // Fallback to local file on error
-        try {
-          const localResponse = await fetch("/data/concessoes.json")
-          const localData = await localResponse.json()
-          setConcessoes(Array.isArray(localData) ? localData : [])
-        } catch (localError) {
-          console.error("Erro ao carregar concessões locais:", localError)
-        }
       }
     }
+
     loadConcessoes()
   }, [])
 
@@ -248,6 +321,21 @@ export default function ServiceSchedulerApp() {
     setBlockedDates(newBlockedDates)
     setWeeklyPlanCounts(newWeeklyCounts)
   }, [submittedPlans])
+
+  useEffect(() => {
+    const newDayDataMap = generateDaysData(dateRange)
+    // Preserve existing data for dates that are still in the new range
+    Object.keys(dayDataMap).forEach((dateStr) => {
+      if (newDayDataMap.find((day) => format(day.date, "yyyy-MM-dd") === dateStr)) {
+        const existingData = dayDataMap[dateStr]
+        const dayIndex = newDayDataMap.findIndex((day) => format(day.date, "yyyy-MM-dd") === dateStr)
+        if (dayIndex !== -1) {
+          newDayDataMap[dayIndex] = { ...newDayDataMap[dayIndex], ...existingData }
+        }
+      }
+    })
+    setDayDataMap(Object.fromEntries(newDayDataMap.map((day) => [format(day.date, "yyyy-MM-dd"), day])))
+  }, [dateRange])
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault()
@@ -289,15 +377,21 @@ export default function ServiceSchedulerApp() {
     setEditingPlanId(null)
     setActiveTab("vegetal")
     setAutoEstrada("")
+    setConcessao("") // Reset concessao state
     setKmInicial("")
     setKmFinal("")
     setIsUrgente(false)
-    setPkInicial("")
-    setPkFinal("")
+    setPkInicial("") // Resetting old states if they exist
+    setPkFinal("") // Resetting old states if they exist
+    setPkInicialKm("") // Reset new states
+    setPkInicialMeters("")
+    setPkFinalKm("")
+    setPkFinalMeters("")
     setSentido("")
     setPerfil("")
     setTrabalhoFixo(false)
     setTrabalhoMovel(false)
+    setPerigosTemporarios(false)
     setLocalIntervencao("")
     setRestricoes("")
     setEsquema("")
@@ -310,7 +404,6 @@ export default function ServiceSchedulerApp() {
     setEntidadeExecutanteContato("")
     setSinalizacaoNome("")
     setSinalizacaoContato("")
-    setConcessao("") // Reset concessao state
   }
 
   const getDatesInRange = (startDate?: Date, endDate?: Date): Date[] => {
@@ -322,6 +415,38 @@ export default function ServiceSchedulerApp() {
       currentDate.setDate(currentDate.getDate() + 1)
     }
     return dates
+  }
+
+  // Function to generate an array of DayData objects for a given date range
+  const generateDaysData = (range: DateRange | undefined): DayData[] => {
+    if (!range?.from) return []
+
+    const days: DayData[] = []
+    const currentDate = new Date(range.from)
+    const endDate = range.to || range.from
+
+    while (currentDate <= endDate) {
+      days.push({
+        date: new Date(currentDate),
+        horaInicio: "",
+        horaFim: "",
+        todoDia: false,
+        pkInicialKm: "",
+        pkInicialMeters: "",
+        pkFinalKm: "",
+        pkFinalMeters: "",
+        sentido: "",
+        perfil: "",
+        tipoTrabalhoDay: "",
+        localIntervencao: "",
+        restricoes: "",
+        esquema: "",
+        observacoes: "",
+      })
+      currentDate.setDate(currentDate.getDate() + 1)
+    }
+
+    return days
   }
 
   const handleDailyDetailChange = (
@@ -362,12 +487,57 @@ export default function ServiceSchedulerApp() {
     })
   }
 
+  const updateDayData = (dateStr: string, field: keyof DayData, value: any) => {
+    setDayDataMap((prev) => ({
+      ...prev,
+      [dateStr]: {
+        ...prev[dateStr],
+        [field]: value,
+      },
+    }))
+  }
+
+  const handleTodoDiaChange = (dateStr: string, checked: boolean) => {
+    setDayDataMap((prev) => ({
+      ...prev,
+      [dateStr]: {
+        ...prev[dateStr],
+        todoDia: checked,
+        horaInicio: checked ? "00:00" : prev[dateStr]?.horaInicio || "",
+        horaFim: checked ? "23:59" : prev[dateStr]?.horaFim || "",
+      },
+    }))
+  }
+
+  const formatTimeInput = (value: string): string => {
+    // Remove all non-numeric characters
+    const numbers = value.replace(/\D/g, "")
+
+    // Limit to 4 digits
+    const limitedNumbers = numbers.slice(0, 4)
+
+    // Add colon after first 2 digits
+    if (limitedNumbers.length >= 3) {
+      return `${limitedNumbers.slice(0, 2)}:${limitedNumbers.slice(2)}`
+    }
+
+    return limitedNumbers
+  }
+
+  const handleTimeInput = (dateStr: string, field: "horaInicio" | "horaFim", value: string) => {
+    const formatted = formatTimeInput(value)
+    updateDayData(dateStr, field, formatted)
+  }
+
   const resetAtividadeForm = () => {
     setDescricaoAtividade("")
     setDateRange(undefined)
     setDailyDetails({})
-    setPkInicial("")
-    setPkFinal("")
+    setDayDataMap({}) // Reset day data map
+    setPkInicialKm("") // Reset split PK fields
+    setPkInicialMeters("")
+    setPkFinalKm("")
+    setPkFinalMeters("")
     setSentido("")
     setPerfil("")
     setLocalIntervencao("")
@@ -381,11 +551,13 @@ export default function ServiceSchedulerApp() {
     setVegetalNumero("")
     setTipoTrabalho("")
     setAutoEstrada("")
+    setConcessao("") // Reset concessao state
     setKmInicial("")
     setKmFinal("")
     setIsUrgente(false)
     setTrabalhoFixo(false)
     setTrabalhoMovel(false)
+    setPerigosTemporarios(false)
     setAtividades([])
     resetAtividadeForm()
     setEditingPlanId(null)
@@ -395,7 +567,6 @@ export default function ServiceSchedulerApp() {
     setEntidadeExecutanteContato("")
     setSinalizacaoNome("")
     setSinalizacaoContato("")
-    setConcessao("") // Reset concessao state
   }
 
   const handleAdicionarAtividade = () => {
@@ -409,7 +580,55 @@ export default function ServiceSchedulerApp() {
       return
     }
 
+    // Validar que todos os dias têm todos os campos preenchidos
     const selectedDates = getDatesInRange(dateRange.from, dateRange.to)
+    const missingFieldsDays: string[] = []
+
+    selectedDates.forEach((date) => {
+      const dateStr = format(date, "yyyy-MM-dd")
+      const dayData = dayDataMap[dateStr]
+
+      if (!dayData) {
+        missingFieldsDays.push(format(date, "dd/MM/yyyy"))
+        return
+      }
+
+      // Verificar se todos os campos obrigatórios estão preenchidos
+      // Excluir horaInicio e horaFim se 'todoDia' estiver ativo
+      const requiredFields: { [key: string]: string | undefined } = {
+        horaInicio: dayData.todoDia ? undefined : dayData.horaInicio,
+        horaFim: dayData.todoDia ? undefined : dayData.horaFim,
+        pkInicialKm: dayData.pkInicialKm,
+        pkInicialMeters: dayData.pkInicialMeters,
+        pkFinalKm: dayData.pkFinalKm,
+        pkFinalMeters: dayData.pkFinalMeters,
+        sentido: dayData.sentido,
+        perfil: dayData.perfil,
+        tipoTrabalhoDay: dayData.tipoTrabalhoDay,
+        localIntervencao: dayData.localIntervencao,
+        restricoes: dayData.restricoes,
+        esquema: dayData.esquema,
+        observacoes: dayData.observacoes,
+      }
+
+      const hasEmptyFields = Object.values(requiredFields).some(
+        (value) => value !== undefined && (value === null || value.trim() === ""),
+      )
+
+      if (hasEmptyFields) {
+        missingFieldsDays.push(format(date, "dd/MM/yyyy"))
+      }
+    })
+
+    if (missingFieldsDays.length > 0) {
+      setNotificationDialog({
+        open: true,
+        title: "Campos Obrigatórios Incompletos",
+        description: `Por favor, preencha todos os campos obrigatórios para os seguintes dias: ${missingFieldsDays.join(", ")}. Certifique-se de preencher todos os campos relevantes.`,
+      })
+      return
+    }
+
     const hasOverlap = selectedDates.some((date) => {
       const dateStr = format(date, "yyyy-MM-dd")
       return blockedDates.has(dateStr)
@@ -433,8 +652,10 @@ export default function ServiceSchedulerApp() {
                 ...ativ,
                 descricaoAtividade,
                 periodo: dateRange,
-                pkInicial,
-                pkFinal,
+                pkInicialKm, // Update split PK fields
+                pkInicialMeters,
+                pkFinalKm,
+                pkFinalMeters,
                 sentido,
                 perfil,
                 localIntervencao,
@@ -452,8 +673,10 @@ export default function ServiceSchedulerApp() {
         id: `atividade-${Date.now()}`,
         descricaoAtividade,
         periodo: dateRange,
-        pkInicial,
-        pkFinal,
+        pkInicialKm, // Add split PK fields
+        pkInicialMeters,
+        pkFinalKm,
+        pkFinalMeters,
         sentido,
         perfil,
         localIntervencao,
@@ -472,8 +695,10 @@ export default function ServiceSchedulerApp() {
     setEditingAtividadeId(atividade.id)
     setDescricaoAtividade(atividade.descricaoAtividade)
     setDateRange(atividade.periodo)
-    setPkInicial(atividade.pkInicial)
-    setPkFinal(atividade.pkFinal)
+    setPkInicialKm(atividade.pkInicialKm) // Load split PK fields
+    setPkInicialMeters(atividade.pkInicialMeters)
+    setPkFinalKm(atividade.pkFinalKm)
+    setPkFinalMeters(atividade.pkFinalMeters)
     setSentido(atividade.sentido)
     setPerfil(atividade.perfil)
     setLocalIntervencao(atividade.localIntervencao)
@@ -505,7 +730,9 @@ export default function ServiceSchedulerApp() {
                 ...plan,
                 numero: vegetalNumero,
                 tipoTrabalho: tipoTrabalho,
+                atividade: atividade, // Save atividade when updating
                 autoEstrada: autoEstrada, // Save autoEstrada when updating
+                concessao: concessao, // Save concessao when updating
                 atividades: atividades,
                 status: "Pendente Confirmação",
                 comentarioGO: undefined,
@@ -513,14 +740,13 @@ export default function ServiceSchedulerApp() {
                 kmFinal,
                 trabalhoFixo,
                 trabalhoMovel,
+                perigosTemporarios, // Update temporary dangers
                 fiscalizacaoNome,
                 fiscalizacaoContato,
                 entidadeExecutanteNome,
                 entidadeExecutanteContato,
                 sinalizacaoNome,
                 sinalizacaoContato,
-                // Add concessao to the plan
-                concessao: concessao,
               }
             : plan,
         ),
@@ -535,7 +761,9 @@ export default function ServiceSchedulerApp() {
         id: `plan-${Date.now()}`,
         numero: vegetalNumero,
         tipoTrabalho: tipoTrabalho,
+        atividade: atividade, // Save atividade when creating
         autoEstrada: autoEstrada, // Save autoEstrada when creating
+        concessao: concessao, // Save concessao when creating
         atividades: atividades,
         status: "Pendente Confirmação",
         tipo: "Manutenção Vegetal",
@@ -544,14 +772,13 @@ export default function ServiceSchedulerApp() {
         kmFinal,
         trabalhoFixo,
         trabalhoMovel,
+        perigosTemporarios, // Add temporary dangers to plan data
         fiscalizacaoNome,
         fiscalizacaoContato,
         entidadeExecutanteNome,
         entidadeExecutanteContato,
         sinalizacaoNome,
         sinalizacaoContato,
-        // Add concessao to the plan
-        concessao: concessao,
       }
       setSubmittedPlans((prev) => [...prev, newPlan])
       setNotificationDialog({
@@ -610,11 +837,14 @@ export default function ServiceSchedulerApp() {
     setEditingPlanId(planToEdit.id)
     setVegetalNumero(planToEdit.numero)
     setTipoTrabalho(planToEdit.tipoTrabalho)
+    setAtividade(planToEdit.atividade || "") // Load atividade when editing
     setAutoEstrada(planToEdit.autoEstrada || "") // Load autoEstrada when editing
+    setConcessao(planToEdit.concessao || "") // Load concessao when editing
     setKmInicial(planToEdit.kmInicial || "")
     setKmFinal(planToEdit.kmFinal || "")
     setTrabalhoFixo(planToEdit.trabalhoFixo || false)
     setTrabalhoMovel(planToEdit.trabalhoMovel || false)
+    setPerigosTemporarios(planToEdit.perigosTemporarios || false) // Load temporary dangers
     setAtividades(planToEdit.atividades)
     setFiscalizacaoNome(planToEdit.fiscalizacaoNome || "")
     setFiscalizacaoContato(planToEdit.fiscalizacaoContato || "")
@@ -622,8 +852,6 @@ export default function ServiceSchedulerApp() {
     setEntidadeExecutanteContato(planToEdit.entidadeExecutanteContato || "")
     setSinalizacaoNome(planToEdit.sinalizacaoNome || "")
     setSinalizacaoContato(planToEdit.sinalizacaoContato || "")
-    // Load concessao when editing a plan
-    setConcessao(planToEdit.concessao || "")
     setActiveTab("vegetal")
   }
 
@@ -631,7 +859,7 @@ export default function ServiceSchedulerApp() {
 
   const disableBlockedDates = (date: Date) => {
     const dateStr = format(date, "yyyy-MM-dd")
-    return blockedDates.has(dateStr)
+    return blockedDates.has(dateStr) || isBefore(startOfDay(date), startOfDay(new Date()))
   }
 
   const handleViewWeeklyPlans = (weekId: string) => {
@@ -672,6 +900,9 @@ export default function ServiceSchedulerApp() {
       if (calendarFilterTipoTrabalho !== "all" && plan.tipoTrabalho !== calendarFilterTipoTrabalho) {
         return false
       }
+      if (calendarFilterPeriod !== "all" && plan.status !== calendarFilterPeriod) {
+        return false
+      }
 
       // Check if any activity falls on this date
       return plan.atividades.some((atividade) => {
@@ -689,9 +920,9 @@ export default function ServiceSchedulerApp() {
       case "Pendente Confirmação":
         return "bg-yellow-100 border-yellow-300 text-yellow-800"
       case "Rejeitado":
-        return "bg-red-100 border-red-300 text-red-800"
+        return "bg-destructive/10 border-destructive text-destructive"
       default:
-        return "bg-gray-100 border-gray-300 text-gray-800"
+        return "bg-muted border-border text-muted-foreground"
     }
   }
 
@@ -708,7 +939,7 @@ export default function ServiceSchedulerApp() {
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
-            <div className="mx-auto mb-4 w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center">
+            <div className="mx-auto mb-4 w-12 h-12 bg-primary rounded-full flex items-center justify-center">
               <Wrench className="w-6 h-6 text-white" />
             </div>
             <CardTitle className="text-2xl">Portal de agendamento</CardTitle>
@@ -753,20 +984,21 @@ export default function ServiceSchedulerApp() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    // Replace hardcoded grays with semantic tokens
+    <div className="min-h-screen bg-secondary">
+      <header className="bg-card shadow-sm border-b">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+              <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
                 <Wrench className="w-4 h-4 text-white" />
               </div>
-              <h1 className="text-xl font-semibold text-gray-900">Portal de agendamento - Planos de Trabalho</h1>
+              <h1 className="text-xl font-semibold text-foreground">Portal de agendamento - Planos de Trabalho</h1>
             </div>
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
-                <User className="w-4 h-4 text-gray-500" />
-                <span className="text-sm text-gray-700">{user.name}</span>
+                <User className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm text-foreground">{user.name}</span>
               </div>
               <Button variant="outline" size="sm" onClick={handleLogout}>
                 <LogOut className="w-4 h-4 mr-2" />
@@ -777,11 +1009,9 @@ export default function ServiceSchedulerApp() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Planos de Trabalho</h2>
-          <p className="text-gray-600">Selecione o tipo de manutenção e crie seu plano de trabalho</p>
-        </div>
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <h2 className="text-2xl font-bold text-foreground mb-2">Planos de Trabalho</h2>
+        <p className="text-muted-foreground">Selecione o tipo de manutenção e crie seu plano de trabalho</p>
 
         {userRole === "prestador" && (
           <Card>
@@ -807,35 +1037,33 @@ export default function ServiceSchedulerApp() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Added Concessao Select */}
-                  <div>
-                    <Label htmlFor="concessao">Concessão</Label>
-                    <Select value={concessao} onValueChange={setConcessao}>
-                      <SelectTrigger id="concessao">
-                        <SelectValue placeholder="Selecione a Concessão" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {concessoes.map((c) => (
-                          <SelectItem key={c} value={c}>
-                            {c}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <AutoEstradasSelect
-                      value={autoEstrada}
-                      onValueChange={setAutoEstrada}
-                      label="Auto Estrada"
-                      placeholder="Selecione a Auto Estrada"
-                    />
-                  </div>
+                <div>
+                  <Label htmlFor="concessao">Concessão</Label>
+                  <Select value={concessao} onValueChange={setConcessao}>
+                    <SelectTrigger id="concessao">
+                      <SelectValue placeholder="Selecione a concessão" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {concessoes.map((concessaoItem) => (
+                        <SelectItem key={concessaoItem.value} value={concessaoItem.value}>
+                          {concessaoItem.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
+                <div>
+                  <AutoEstradasSelect
+                    value={autoEstrada}
+                    onValueChange={setAutoEstrada}
+                    label="Auto Estrada"
+                    placeholder="Selecione a Auto Estrada"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-0.5">
+                  <div className="max-w-[120px]">
                     <Label htmlFor="km-inicial">Km inicial</Label>
                     <Input
                       id="km-inicial"
@@ -845,7 +1073,7 @@ export default function ServiceSchedulerApp() {
                       onChange={(e) => setKmInicial(e.target.value)}
                     />
                   </div>
-                  <div>
+                  <div className="max-w-[120px]">
                     <Label htmlFor="km-final">Km final</Label>
                     <Input
                       id="km-final"
@@ -858,7 +1086,8 @@ export default function ServiceSchedulerApp() {
                 </div>
 
                 {editingPlanId && getEditingPlan()?.comentarioGO && (
-                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  // Replace bg-red-50 and border-red-200 with destructive tokens
+                  <div className="p-4 bg-destructive/10 border border-destructive rounded-lg">
                     <Label className="text-sm font-semibold text-red-800 mb-2 block">
                       Comentário do Gestor de Operações:
                     </Label>
@@ -877,26 +1106,47 @@ export default function ServiceSchedulerApp() {
                     />
                   </div>
 
-                  <div>
-                    <Label htmlFor="vegetal-tipo-trabalho">Tipo de Trabalho</Label>
-                    <Select value={tipoTrabalho} onValueChange={setTipoTrabalho}>
-                      <SelectTrigger id="vegetal-tipo-trabalho">
-                        <SelectValue placeholder="Selecione o tipo de trabalho" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="opcao1">Opção 1 (a definir)</SelectItem>
-                        <SelectItem value="opcao2">Opção 2 (a definir)</SelectItem>
-                        <SelectItem value="opcao3">Opção 3 (a definir)</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
+                    <div>
+                      <Label htmlFor="vegetal-tipo-trabalho">Tipo de Trabalho</Label>
+                      <Select value={tipoTrabalho} onValueChange={setTipoTrabalho}>
+                        <SelectTrigger id="vegetal-tipo-trabalho">
+                          <SelectValue placeholder="Selecione o tipo de trabalho" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="opcao1">Opção 1 (a definir)</SelectItem>
+                          <SelectItem value="opcao2">Opção 2 (a definir)</SelectItem>
+                          <SelectItem value="opcao3">Opção 3 (a definir)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="atividade">Atividade</Label>
+                      <Select value={atividade} onValueChange={setAtividade}>
+                        <SelectTrigger id="atividade">
+                          <SelectValue placeholder="Selecione a atividade" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="limpeza">Limpeza</SelectItem>
+                          <SelectItem value="poda">Poda</SelectItem>
+                          <SelectItem value="reparacao">Reparação</SelectItem>
+                          <SelectItem value="sinalizacao">Sinalização</SelectItem>
+                          <SelectItem value="pavimentacao">Pavimentação</SelectItem>
+                          <SelectItem value="inspecao">Inspeção</SelectItem>
+                          <SelectItem value="manutencao-preventiva">Manutenção Preventiva</SelectItem>
+                          <SelectItem value="manutencao-corretiva">Manutenção Corretiva</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
 
                   <div className="relative my-8">
                     <div className="absolute inset-0 flex items-center">
-                      <span className="w-full border-t-2 border-gray-400" />
+                      <span className="w-full border-t-2 border-border" />
                     </div>
                     <div className="relative flex justify-center text-sm uppercase">
-                      <span className="bg-white px-4 text-gray-700 font-semibold tracking-wide">
+                      <span className="bg-card px-4 text-foreground font-semibold tracking-wide">
                         Detalhes das Atividades
                       </span>
                     </div>
@@ -932,48 +1182,48 @@ export default function ServiceSchedulerApp() {
                               </div>
                             </AccordionTrigger>
                             <AccordionContent>
-                              <div className="p-4 space-y-3 bg-gray-50 rounded-lg">
+                              <div className="p-4 space-y-3 bg-muted rounded-lg">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                                   <div>
                                     <Label className="font-semibold">Descrição:</Label>
-                                    <p className="text-gray-700">{atividade.descricaoAtividade}</p>
+                                    <p className="text-foreground">{atividade.descricaoAtividade}</p>
                                   </div>
                                   <div>
                                     <Label className="font-semibold">Período:</Label>
-                                    <p className="text-gray-700">
+                                    <p className="text-foreground">
                                       {atividade.periodo.from && atividade.periodo.to
-                                        ? `${format(atividade.periodo.from, "dd/MM/yyyy")}/${format(atividade.periodo.to, "dd/MM/yyyy")}`
+                                        ? `${format(atividade.periodo.from, "dd/MM/yyyy")}-${format(atividade.periodo.to, "dd/MM/yyyy")}`
                                         : "N/A"}
                                     </p>
                                   </div>
-                                  {atividade.pkInicial && (
+                                  {atividade.pkInicialKm && (
                                     <div>
                                       <Label className="font-semibold">Pk Inicial:</Label>
-                                      <p className="text-gray-700">{atividade.pkInicial}</p>
+                                      <p className="text-foreground">{`${atividade.pkInicialKm}km ${atividade.pkInicialMeters}m`}</p>
                                     </div>
                                   )}
-                                  {atividade.pkFinal && (
+                                  {atividade.pkFinalKm && (
                                     <div>
                                       <Label className="font-semibold">Pk Final:</Label>
-                                      <p className="text-gray-700">{atividade.pkFinal}</p>
+                                      <p className="text-foreground">{`${atividade.pkFinalKm}km ${atividade.pkFinalMeters}m`}</p>
                                     </div>
                                   )}
                                   {atividade.sentido && (
                                     <div>
                                       <Label className="font-semibold">Sentido:</Label>
-                                      <p className="text-gray-700 capitalize">{atividade.sentido}</p>
+                                      <p className="text-foreground capitalize">{atividade.sentido}</p>
                                     </div>
                                   )}
                                   {atividade.perfil && (
                                     <div>
                                       <Label className="font-semibold">Perfil:</Label>
-                                      <p className="text-gray-700">{atividade.perfil}</p>
+                                      <p className="text-foreground">{atividade.perfil}</p>
                                     </div>
                                   )}
                                   {atividade.localIntervencao && (
                                     <div>
                                       <Label className="font-semibold">Local de Intervenção:</Label>
-                                      <p className="text-gray-700 capitalize">
+                                      <p className="text-foreground capitalize">
                                         {atividade.localIntervencao.replace(/-/g, " ")}
                                       </p>
                                     </div>
@@ -981,19 +1231,19 @@ export default function ServiceSchedulerApp() {
                                   {atividade.restricoes && (
                                     <div>
                                       <Label className="font-semibold">Restrições:</Label>
-                                      <p className="text-gray-700">{atividade.restricoes}</p>
+                                      <p className="text-foreground">{atividade.restricoes}</p>
                                     </div>
                                   )}
                                   {atividade.esquema && (
                                     <div>
                                       <Label className="font-semibold">Esquema:</Label>
-                                      <p className="text-gray-700">{atividade.esquema}</p>
+                                      <p className="text-foreground">{atividade.esquema}</p>
                                     </div>
                                   )}
                                   {atividade.observacoes && (
                                     <div className="md:col-span-2">
                                       <Label className="font-semibold">Observações:</Label>
-                                      <p className="text-gray-700 whitespace-pre-wrap">{atividade.observacoes}</p>
+                                      <p className="text-foreground whitespace-pre-wrap">{atividade.observacoes}</p>
                                     </div>
                                   )}
                                 </div>
@@ -1024,276 +1274,438 @@ export default function ServiceSchedulerApp() {
                       defaultMonth={dateRange?.from}
                       selected={dateRange}
                       onSelect={setDateRange}
-                      numberOfMonths={2}
+                      numberOfMonths={3}
                       locale={ptBR}
                       className="rounded-md border shadow"
                       disabled={disableBlockedDates}
+                      modifiers={{
+                        holiday: (date) => isPortugueseHoliday(date),
+                      }}
+                      modifiersClassNames={{
+                        holiday: "bg-red-100 text-red-900 font-semibold hover:bg-red-200",
+                      }}
                     />
-                    <div className="mt-3 text-xs text-gray-500 text-center">
+                    <div className="mt-3 text-xs text-muted-foreground text-center">
                       {datesToRender.length === 0 && "Selecione um período no calendário"}
                       {datesToRender.length === 1 && "1 dia selecionado"}
                       {datesToRender.length > 1 && `${datesToRender.length} dias selecionados`}
                     </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <Label htmlFor="pk-inicial">Pk inicial</Label>
-                      <Input
-                        id="pk-inicial"
-                        type="number"
-                        placeholder="Ex: 10.5"
-                        step="0.1"
-                        value={pkInicial}
-                        onChange={(e) => setPkInicial(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="pk-final">Pk final</Label>
-                      <Input
-                        id="pk-final"
-                        type="number"
-                        placeholder="Ex: 15.3"
-                        step="0.1"
-                        value={pkFinal}
-                        onChange={(e) => setPkFinal(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <Label htmlFor="sentido">Sentido</Label>
-                    <Select value={sentido} onValueChange={setSentido}>
-                      <SelectTrigger id="sentido">
-                        <SelectValue placeholder="Selecione o sentido" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="crescente">Crescente</SelectItem>
-                        <SelectItem value="decrescente">Decrescente</SelectItem>
-                        <SelectItem value="ambos">Ambos</SelectItem>
-                        <SelectItem value="nenhum">Nenhum</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label htmlFor="perfil">Perfil</Label>
-                    <Select value={perfil} onValueChange={setPerfil}>
-                      <SelectTrigger id="perfil">
-                        <SelectValue placeholder="Selecione o perfil" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="2x2">2 x 2</SelectItem>
-                        <SelectItem value="2x3">2 x 3</SelectItem>
-                        <SelectItem value="2x4">2 x 4</SelectItem>
-                        <SelectItem value="1x1">1 x 1</SelectItem>
-                        <SelectItem value="1x2">1 x 2</SelectItem>
-                        <SelectItem value="garrafao">Garrafão de Portagem</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label className="mb-3 block">Tipo de Trabalhos</Label>
-                    <div className="flex flex-col sm:flex-row gap-4">
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="trabalho-fixo"
-                          checked={trabalhoFixo}
-                          onCheckedChange={(checked) => setTrabalhoFixo(checked as boolean)}
-                        />
-                        <Label htmlFor="trabalho-fixo" className="font-normal cursor-pointer">
-                          Trabalhos Fixos
-                        </Label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="trabalho-movel"
-                          checked={trabalhoMovel}
-                          onCheckedChange={(checked) => setTrabalhoMovel(checked as boolean)}
-                        />
-                        <Label htmlFor="trabalho-movel" className="font-normal cursor-pointer">
-                          Trabalhos Móveis
-                        </Label>
+                    <div className="mt-2 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-3 bg-red-100 border border-red-300 rounded"></div>
+                        <span>Feriados Nacionais</span>
                       </div>
                     </div>
                   </div>
 
-                  <div>
-                    <Label htmlFor="local-intervencao">Local de intervenção</Label>
-                    <Select value={localIntervencao} onValueChange={setLocalIntervencao}>
-                      <SelectTrigger id="local-intervencao">
-                        <SelectValue placeholder="Selecione o local de intervenção" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="plena-via">Plena Via</SelectItem>
-                        <SelectItem value="no-ramo">Nó / Ramo</SelectItem>
-                        <SelectItem value="separador-central">Separador Central</SelectItem>
-                        <SelectItem value="talude">Talude</SelectItem>
-                        <SelectItem value="acesso-exterior">Acesso Exterior</SelectItem>
-                        <SelectItem value="portagem">Portagem</SelectItem>
-                        <SelectItem value="area-servico">Área de Serviço</SelectItem>
-                        <SelectItem value="area-repouso">Área de Repouso</SelectItem>
-                        <SelectItem value="fora-concessao">Fora da Concessão</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {datesToRender.length > 0 && (
+                    <div className="space-y-4">
+                      <Label className="text-base font-semibold">Detalhes por Dia</Label>
+                      <div className="flex flex-col lg:flex-row gap-4 overflow-x-auto">
+                        {datesToRender.map((date) => {
+                          const dateStr = format(date, "yyyy-MM-dd")
+                          const dayData = dayDataMap[dateStr]
+                          if (!dayData) return null
 
-                  <div>
-                    <Label htmlFor="restricoes">Restrições</Label>
-                    <Select value={restricoes} onValueChange={setRestricoes}>
-                      <SelectTrigger id="restricoes">
-                        <SelectValue placeholder="Selecione as restrições" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="restricao1">Restrição 1 (a definir)</SelectItem>
-                        <SelectItem value="restricao2">Restrição 2 (a definir)</SelectItem>
-                        <SelectItem value="restricao3">Restrição 3 (a definir)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                          return (
+                            <div
+                              key={dateStr}
+                              className="flex-shrink-0 border rounded-xl p-3 shadow-sm bg-white min-w-[300px] lg:min-w-[350px]"
+                            >
+                              {/* Date header */}
+                              <div className="mb-3 pb-2 border-b">
+                                <h4 className="font-semibold text-foreground">
+                                  {format(date, "dd/MM/yyyy", { locale: ptBR })}
+                                </h4>
+                                <p className="text-xs text-muted-foreground capitalize">
+                                  {format(date, "EEEE", { locale: ptBR })}
+                                </p>
+                              </div>
 
-                  <div>
-                    <Label htmlFor="esquema">Esquema</Label>
-                    <Select value={esquema} onValueChange={setEsquema}>
-                      <SelectTrigger id="esquema">
-                        <SelectValue placeholder="Selecione o esquema" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="esquema1">Esquema 1 (a definir)</SelectItem>
-                        <SelectItem value="esquema2">Esquema 2 (a definir)</SelectItem>
-                        <SelectItem value="esquema3">Esquema 3 (a definir)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                              {/* Time fields - horizontal layout */}
+                              <div className="flex flex-row gap-2 mb-3">
+                                <div className="flex-1">
+                                  <Label htmlFor={`hora-inicio-${dateStr}`} className="text-xs">
+                                    Hora de Início (24h)
+                                  </Label>
+                                  <Input
+                                    id={`hora-inicio-${dateStr}`}
+                                    type="text"
+                                    value={dayData.horaInicio}
+                                    onChange={(e) => handleTimeInput(dateStr, "horaInicio", e.target.value)}
+                                    disabled={dayData.todoDia}
+                                    className="text-sm"
+                                    placeholder="HH:MM"
+                                    pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+                                    maxLength={5}
+                                    required
+                                  />
+                                </div>
+                                <div className="flex-1">
+                                  <Label htmlFor={`hora-fim-${dateStr}`} className="text-xs">
+                                    Hora de Fim (24h)
+                                  </Label>
+                                  <Input
+                                    id={`hora-fim-${dateStr}`}
+                                    type="text"
+                                    value={dayData.horaFim}
+                                    onChange={(e) => handleTimeInput(dateStr, "horaFim", e.target.value)}
+                                    disabled={dayData.todoDia}
+                                    className="text-sm"
+                                    placeholder="HH:MM"
+                                    pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+                                    maxLength={5}
+                                    required
+                                  />
+                                </div>
+                                <div className="flex flex-col justify-end pb-2">
+                                  <div className="flex items-center space-x-1">
+                                    <Checkbox
+                                      id={`todo-dia-${dateStr}`}
+                                      checked={dayData.todoDia}
+                                      onCheckedChange={(checked) => handleTodoDiaChange(dateStr, checked as boolean)}
+                                    />
+                                    <Label htmlFor={`todo-dia-${dateStr}`} className="text-xs cursor-pointer">
+                                      Todo o dia
+                                    </Label>
+                                  </div>
+                                </div>
+                              </div>
 
-                  <div>
-                    <Label htmlFor="observacoes">Observações</Label>
-                    <Textarea
-                      id="observacoes"
-                      placeholder="Adicione observações relevantes..."
-                      value={observacoes}
-                      onChange={(e) => setObservacoes(e.target.value)}
-                      rows={4}
-                    />
-                  </div>
+                              {/* Detail fields - vertical layout (shown when time is selected or todo dia is checked) */}
+                              {(dayData.horaInicio || dayData.horaFim || dayData.todoDia) && (
+                                <div className="space-y-3 pt-3 border-t">
+                                  <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                      <Label className="text-xs">Pk inicial</Label>
+                                      <div className="flex items-center gap-2">
+                                        <Input
+                                          type="text"
+                                          inputMode="numeric"
+                                          placeholder="Km"
+                                          value={dayData.pkInicialKm}
+                                          onChange={(e) => {
+                                            const value = e.target.value.replace(/[^0-9]/g, "")
+                                            updateDayData(dateStr, "pkInicialKm", value)
+                                          }}
+                                          className="text-sm w-16"
+                                          maxLength={3}
+                                        />
+                                        <span className="text-lg font-semibold">+</span>
+                                        <Input
+                                          type="text"
+                                          inputMode="numeric"
+                                          placeholder="m"
+                                          value={dayData.pkInicialMeters}
+                                          onChange={(e) => {
+                                            const value = e.target.value.replace(/[^0-9]/g, "")
+                                            if (Number.parseInt(value) <= 999 || value === "") {
+                                              updateDayData(dateStr, "pkInicialMeters", value)
+                                            }
+                                          }}
+                                          className="text-sm w-16"
+                                          maxLength={3}
+                                        />
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <Label className="text-xs">Pk final</Label>
+                                      <div className="flex items-center gap-2">
+                                        <Input
+                                          type="text"
+                                          inputMode="numeric"
+                                          placeholder="Km"
+                                          value={dayData.pkFinalKm}
+                                          onChange={(e) => {
+                                            const value = e.target.value.replace(/[^0-9]/g, "")
+                                            updateDayData(dateStr, "pkFinalKm", value)
+                                          }}
+                                          className="text-sm w-16"
+                                          maxLength={3}
+                                        />
+                                        <span className="text-lg font-semibold">+</span>
+                                        <Input
+                                          type="text"
+                                          inputMode="numeric"
+                                          placeholder="m"
+                                          value={dayData.pkFinalMeters}
+                                          onChange={(e) => {
+                                            const value = e.target.value.replace(/[^0-9]/g, "")
+                                            if (Number.parseInt(value) <= 999 || value === "") {
+                                              updateDayData(dateStr, "pkFinalMeters", value)
+                                            }
+                                          }}
+                                          className="text-sm w-16"
+                                          maxLength={3}
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
 
-                  <div className="flex justify-end gap-2 mt-6">
-                    <Button size="sm" onClick={handleAdicionarAtividade} variant="outline">
-                      <Plus className="w-4 h-4 mr-2" />
-                      {editingAtividadeId ? "Atualizar Atividade" : "Adicionar Atividade"}
-                    </Button>
-                    {editingAtividadeId && (
-                      <Button size="sm" variant="ghost" onClick={resetAtividadeForm}>
-                        Cancelar
-                      </Button>
-                    )}
-                  </div>
+                                  <div>
+                                    <Label htmlFor={`sentido-${dateStr}`} className="text-xs">
+                                      Sentido
+                                    </Label>
+                                    <Select
+                                      value={dayData.sentido}
+                                      onValueChange={(value) => updateDayData(dateStr, "sentido", value)}
+                                    >
+                                      <SelectTrigger id={`sentido-${dateStr}`} className="text-sm">
+                                        <SelectValue placeholder="Selecione" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="crescente">Crescente</SelectItem>
+                                        <SelectItem value="decrescente">Decrescente</SelectItem>
+                                        <SelectItem value="ambos">Ambos</SelectItem>
+                                        <SelectItem value="nenhum">Nenhum</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div>
+                                    <Label htmlFor={`perfil-${dateStr}`} className="text-xs">
+                                      Perfil
+                                    </Label>
+                                    <Select
+                                      value={dayData.perfil}
+                                      onValueChange={(value) => updateDayData(dateStr, "perfil", value)}
+                                    >
+                                      <SelectTrigger id={`perfil-${dateStr}`} className="text-sm">
+                                        <SelectValue placeholder="Selecione" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="2x2">2 x 2</SelectItem>
+                                        <SelectItem value="2x3">2 x 3</SelectItem>
+                                        <SelectItem value="2x4">2 x 4</SelectItem>
+                                        <SelectItem value="1x1">1 x 1</SelectItem>
+                                        <SelectItem value="1x2">1 x 2</SelectItem>
+                                        <SelectItem value="garrafao">Garrafão de Portagem</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div>
+                                    <Label htmlFor={`tipo-trabalho-day-${dateStr}`} className="text-xs">
+                                      Tipo de trabalho
+                                    </Label>
+                                    <Select
+                                      value={dayData.tipoTrabalhoDay}
+                                      onValueChange={(value) => updateDayData(dateStr, "tipoTrabalhoDay", value)}
+                                    >
+                                      <SelectTrigger id={`tipo-trabalho-day-${dateStr}`} className="text-sm">
+                                        <SelectValue placeholder="Selecione" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="opcao1">Opção 1 (a definir)</SelectItem>
+                                        <SelectItem value="opcao2">Opção 2 (a definir)</SelectItem>
+                                        <SelectItem value="opcao3">Opção 3 (a definir)</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div>
+                                    <Label htmlFor={`local-intervencao-${dateStr}`} className="text-xs">
+                                      Local da intervenção
+                                    </Label>
+                                    <Select
+                                      value={dayData.localIntervencao}
+                                      onValueChange={(value) => updateDayData(dateStr, "localIntervencao", value)}
+                                    >
+                                      <SelectTrigger id={`local-intervencao-${dateStr}`} className="text-sm">
+                                        <SelectValue placeholder="Selecione" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="plena-via">Plena Via</SelectItem>
+                                        <SelectItem value="no-ramo">Nó / Ramo</SelectItem>
+                                        <SelectItem value="separador-central">Separador Central</SelectItem>
+                                        <SelectItem value="talude">Talude</SelectItem>
+                                        <SelectItem value="acesso-exterior">Acesso Exterior</SelectItem>
+                                        <SelectItem value="portagem">Portagem</SelectItem>
+                                        <SelectItem value="area-servico">Área de Serviço</SelectItem>
+                                        <SelectItem value="area-repouso">Área de Repouso</SelectItem>
+                                        <SelectItem value="fora-concessao">Fora da Concessão</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div>
+                                    <Label htmlFor={`restricoes-${dateStr}`} className="text-xs">
+                                      Restrições
+                                    </Label>
+                                    <Select
+                                      value={dayData.restricoes}
+                                      onValueChange={(value) => updateDayData(dateStr, "restricoes", value)}
+                                    >
+                                      <SelectTrigger id={`restricoes-${dateStr}`} className="text-sm">
+                                        <SelectValue placeholder="Selecione" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="restricao1">Restrição 1 (a definir)</SelectItem>
+                                        <SelectItem value="restricao2">Restrição 2 (a definir)</SelectItem>
+                                        <SelectItem value="restricao3">Restrição 3 (a definir)</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div>
+                                    <Label htmlFor={`esquema-${dateStr}`} className="text-xs">
+                                      Esquema
+                                    </Label>
+                                    <Select
+                                      value={dayData.esquema}
+                                      onValueChange={(value) => updateDayData(dateStr, "esquema", value)}
+                                    >
+                                      <SelectTrigger id={`esquema-${dateStr}`} className="text-sm">
+                                        <SelectValue placeholder="Selecione" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="esquema1">Esquema 1 (a definir)</SelectItem>
+                                        <SelectItem value="esquema2">Esquema 2 (a definir)</SelectItem>
+                                        <SelectItem value="esquema3">Esquema 3 (a definir)</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div>
+                                    <Label htmlFor={`observacoes-${dateStr}`} className="text-xs">
+                                      Observações
+                                    </Label>
+                                    <Textarea
+                                      id={`observacoes-${dateStr}`}
+                                      placeholder="Observações..."
+                                      value={dayData.observacoes}
+                                      onChange={(e) => updateDayData(dateStr, "observacoes", e.target.value)}
+                                      rows={2}
+                                      className="text-sm"
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Removed Pk inicial, Pk final, and Sentido fields from here */}
                 </div>
 
-                <div className="relative my-8">
-                  <div className="absolute inset-0 flex items-center">
-                    <span className="w-full border-t-2 border-gray-400" />
-                  </div>
-                  <div className="relative flex justify-center text-sm uppercase">
-                    <span className="bg-white px-4 text-gray-700 font-semibold tracking-wide">Contactos</span>
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  {/* Fiscalização */}
-                  <div className="space-y-4">
-                    <Label className="text-base font-semibold text-gray-900">Fiscalização</Label>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="fiscalizacao-nome">Nome</Label>
-                        <Input
-                          id="fiscalizacao-nome"
-                          type="text"
-                          placeholder="Nome do responsável"
-                          value={fiscalizacaoNome}
-                          onChange={(e) => setFiscalizacaoNome(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="fiscalizacao-contato">Contato</Label>
-                        <Input
-                          id="fiscalizacao-contato"
-                          type="tel"
-                          placeholder="Telefone ou email"
-                          value={fiscalizacaoContato}
-                          onChange={(e) => setFiscalizacaoContato(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Entidade Executante */}
-                  <div className="space-y-4">
-                    <Label className="text-base font-semibold text-gray-900">Entidade Executante</Label>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="entidade-nome">Nome</Label>
-                        <Input
-                          id="entidade-nome"
-                          type="text"
-                          placeholder="Nome do responsável"
-                          value={entidadeExecutanteNome}
-                          onChange={(e) => setEntidadeExecutanteNome(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="entidade-contato">Contato</Label>
-                        <Input
-                          id="entidade-contato"
-                          type="tel"
-                          placeholder="Telefone ou email"
-                          value={entidadeExecutanteContato}
-                          onChange={(e) => setEntidadeExecutanteContato(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Sinalização */}
-                  <div className="space-y-4">
-                    <Label className="text-base font-semibold text-gray-900">Sinalização</Label>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="sinalizacao-nome">Nome</Label>
-                        <Input
-                          id="sinalizacao-nome"
-                          type="text"
-                          placeholder="Nome do responsável"
-                          value={sinalizacaoNome}
-                          onChange={(e) => setSinalizacaoNome(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="sinalizacao-contato">Contato</Label>
-                        <Input
-                          id="sinalizacao-contato"
-                          type="tel"
-                          placeholder="Telefone ou email"
-                          value={sinalizacaoContato}
-                          onChange={(e) => setSinalizacaoContato(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex gap-2 mt-6">
-                  <Button className="flex-1" onClick={handleSubmitOrUpdateVegetalPlan}>
-                    <CalendarDays className="w-4 h-4 mr-2" />
-                    {editingPlanId ? "Atualizar Plano de Trabalho" : "Submeter Plano de Trabalho"}
+                <div className="flex justify-end gap-2 mt-6">
+                  <Button size="sm" onClick={handleAdicionarAtividade} variant="outline">
+                    <Plus className="w-4 h-4 mr-2" />
+                    {editingAtividadeId ? "Atualizar Atividade" : "Adicionar Atividade"}
                   </Button>
-                  {editingPlanId && (
-                    <Button variant="outline" onClick={resetForm}>
-                      Cancelar Edição
+                  {editingAtividadeId && (
+                    <Button size="sm" variant="ghost" onClick={resetAtividadeForm}>
+                      Cancelar
                     </Button>
                   )}
                 </div>
+              </div>
+
+              <div className="relative my-8">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t-2 border-border" />
+                </div>
+                <div className="relative flex justify-center text-sm uppercase">
+                  <span className="bg-card px-4 text-foreground font-semibold tracking-wide">Contactos</span>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                {/* Fiscalização */}
+                <div className="space-y-4">
+                  <Label className="text-base font-semibold text-foreground">Fiscalização</Label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="fiscalizacao-nome">Nome</Label>
+                      <Input
+                        id="fiscalizacao-nome"
+                        type="text"
+                        placeholder="Nome do responsável"
+                        value={fiscalizacaoNome}
+                        onChange={(e) => setFiscalizacaoNome(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="fiscalizacao-contato">Contato</Label>
+                      <Input
+                        id="fiscalizacao-contato"
+                        type="tel"
+                        placeholder="Telefone ou email"
+                        value={fiscalizacaoContato}
+                        onChange={(e) => setFiscalizacaoContato(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Entidade Executante */}
+                <div className="space-y-4">
+                  <Label className="text-base font-semibold text-foreground">Entidade Executante</Label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="entidade-nome">Nome</Label>
+                      <Input
+                        id="entidade-nome"
+                        type="text"
+                        placeholder="Nome do responsável"
+                        value={entidadeExecutanteNome}
+                        onChange={(e) => setEntidadeExecutanteNome(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="entidade-contato">Contato</Label>
+                      <Input
+                        id="entidade-contato"
+                        type="tel"
+                        placeholder="Telefone ou email"
+                        value={entidadeExecutanteContato}
+                        onChange={(e) => setEntidadeExecutanteContato(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sinalização */}
+                <div className="space-y-4">
+                  <Label className="text-base font-semibold text-foreground">Sinalização</Label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="sinalizacao-nome">Nome</Label>
+                      <Input
+                        id="sinalizacao-nome"
+                        type="text"
+                        placeholder="Nome do responsável"
+                        value={sinalizacaoNome}
+                        onChange={(e) => setSinalizacaoNome(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="sinalizacao-contato">Contato</Label>
+                      <Input
+                        id="sinalizacao-contato"
+                        type="tel"
+                        placeholder="Telefone ou email"
+                        value={sinalizacaoContato}
+                        onChange={(e) => setSinalizacaoContato(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 mt-6">
+                <Button className="flex-1" onClick={handleSubmitOrUpdateVegetalPlan}>
+                  <CalendarDays className="w-4 h-4 mr-2" />
+                  {editingPlanId ? "Atualizar Plano de Trabalho" : "Submeter Plano de Trabalho"}
+                </Button>
+                {editingPlanId && (
+                  <Button variant="outline" onClick={resetForm}>
+                    Cancelar Edição
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -1323,7 +1735,8 @@ export default function ServiceSchedulerApp() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {submittedPlans.filter((plan) => plan.status === "Pendente Confirmação").length === 0 ? (
-                    <p className="text-gray-500">Nenhum plano pendente de aprovação.</p>
+                    // Replace text-gray-500 with text-muted-foreground
+                    <p className="text-muted-foreground">Nenhum plano pendente de aprovação.</p>
                   ) : (
                     submittedPlans
                       .filter((plan) => plan.status === "Pendente Confirmação")
@@ -1336,7 +1749,7 @@ export default function ServiceSchedulerApp() {
                             <h4 className="font-medium text-lg">
                               {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
                             </h4>
-                            <p className="text-sm text-gray-500">
+                            <p className="text-sm text-muted-foreground">
                               {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
                             </p>
                             <Badge variant="outline">{plan.status}</Badge>
@@ -1355,7 +1768,8 @@ export default function ServiceSchedulerApp() {
                                     </DialogDescription>
 
                                     {selectedPlanForDetails.comentarioGO && (
-                                      <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                                      // Replace bg-red-50 and border-red-200 with destructive tokens
+                                      <div className="mt-4 p-3 bg-destructive/10 border border-destructive rounded-lg">
                                         <Label className="text-sm font-semibold text-red-800 block mb-1">
                                           Comentário do Gestor de Operações:
                                         </Label>
@@ -1368,32 +1782,41 @@ export default function ServiceSchedulerApp() {
                                     <div className="grid grid-cols-1 gap-4">
                                       <div className="flex flex-col space-y-2">
                                         <Label className="font-semibold">Tipo:</Label>
-                                        <span className="text-gray-700">{selectedPlanForDetails.tipo}</span>
+                                        <span className="text-foreground">{selectedPlanForDetails.tipo}</span>
                                       </div>
 
                                       <div className="flex flex-col space-y-2">
                                         <Label className="font-semibold">Sublanço:</Label>
-                                        <span className="text-gray-700">{selectedPlanForDetails.numero || "N/A"}</span>
+                                        <span className="text-foreground">
+                                          {selectedPlanForDetails.numero || "N/A"}
+                                        </span>
                                       </div>
 
                                       <div className="flex flex-col space-y-2">
                                         <Label className="font-semibold">Tipo de Trabalho:</Label>
-                                        <span className="text-gray-700">
+                                        <span className="text-foreground">
                                           {selectedPlanForDetails.tipoTrabalho || "N/A"}
+                                        </span>
+                                      </div>
+
+                                      <div className="flex flex-col space-y-2">
+                                        <Label className="font-semibold">Atividade:</Label>
+                                        <span className="text-foreground">
+                                          {selectedPlanForDetails.atividade || "N/A"}
                                         </span>
                                       </div>
 
                                       {selectedPlanForDetails.kmInicial && (
                                         <div className="flex flex-col space-y-2">
                                           <Label className="font-semibold">Km Inicial:</Label>
-                                          <span className="text-gray-700">{selectedPlanForDetails.kmInicial}</span>
+                                          <span className="text-foreground">{selectedPlanForDetails.kmInicial}</span>
                                         </div>
                                       )}
 
                                       {selectedPlanForDetails.kmFinal && (
                                         <div className="flex flex-col space-y-2">
                                           <Label className="font-semibold">Km Final:</Label>
-                                          <span className="text-gray-700">{selectedPlanForDetails.kmFinal}</span>
+                                          <span className="text-foreground">{selectedPlanForDetails.kmFinal}</span>
                                         </div>
                                       )}
 
@@ -1401,13 +1824,26 @@ export default function ServiceSchedulerApp() {
                                         selectedPlanForDetails.trabalhoMovel) && (
                                         <div className="flex flex-col space-y-2">
                                           <Label className="font-semibold">Tipo de Trabalhos:</Label>
-                                          <span className="text-gray-700">
+                                          <span className="text-foreground">
                                             {[
                                               selectedPlanForDetails.trabalhoFixo && "Trabalhos Fixos",
                                               selectedPlanForDetails.trabalhoMovel && "Trabalhos Móveis",
                                             ]
                                               .filter(Boolean)
                                               .join(", ")}
+                                          </span>
+                                        </div>
+                                      )}
+
+                                      {selectedPlanForDetails.perigosTemporarios && (
+                                        <div className="flex flex-col space-y-2">
+                                          <Label className="font-semibold">Perigos Temporários:</Label>
+                                          <span className="text-foreground">
+                                            {selectedPlanForDetails.perigosTemporarios
+                                              .toString()
+                                              .split("-")
+                                              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                                              .join(" ")}
                                           </span>
                                         </div>
                                       )}
@@ -1427,14 +1863,6 @@ export default function ServiceSchedulerApp() {
                                           {selectedPlanForDetails.status}
                                         </Badge>
                                       </div>
-
-                                      {/* Display Concessao if available */}
-                                      {selectedPlanForDetails.concessao && (
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Concessão:</Label>
-                                          <span className="text-gray-700">{selectedPlanForDetails.concessao}</span>
-                                        </div>
-                                      )}
                                     </div>
 
                                     {(selectedPlanForDetails.fiscalizacaoNome ||
@@ -1446,7 +1874,7 @@ export default function ServiceSchedulerApp() {
                                           {selectedPlanForDetails.fiscalizacaoNome && (
                                             <div>
                                               <Label className="font-semibold text-sm">Fiscalização:</Label>
-                                              <p className="text-gray-700">
+                                              <p className="text-foreground">
                                                 {selectedPlanForDetails.fiscalizacaoNome}
                                                 {selectedPlanForDetails.fiscalizacaoContato &&
                                                   ` - ${selectedPlanForDetails.fiscalizacaoContato}`}
@@ -1456,7 +1884,7 @@ export default function ServiceSchedulerApp() {
                                           {selectedPlanForDetails.entidadeExecutanteNome && (
                                             <div>
                                               <Label className="font-semibold text-sm">Entidade Executante:</Label>
-                                              <p className="text-gray-700">
+                                              <p className="text-foreground">
                                                 {selectedPlanForDetails.entidadeExecutanteNome}
                                                 {selectedPlanForDetails.entidadeExecutanteContato &&
                                                   ` - ${selectedPlanForDetails.entidadeExecutanteContato}`}
@@ -1466,7 +1894,7 @@ export default function ServiceSchedulerApp() {
                                           {selectedPlanForDetails.sinalizacaoNome && (
                                             <div>
                                               <Label className="font-semibold text-sm">Sinalização:</Label>
-                                              <p className="text-gray-700">
+                                              <p className="text-foreground">
                                                 {selectedPlanForDetails.sinalizacaoNome}
                                                 {selectedPlanForDetails.sinalizacaoContato &&
                                                   ` - ${selectedPlanForDetails.sinalizacaoContato}`}
@@ -1482,7 +1910,8 @@ export default function ServiceSchedulerApp() {
                                         Atividades ({selectedPlanForDetails.atividades.length}):
                                       </h5>
                                       {selectedPlanForDetails.atividades.length === 0 ? (
-                                        <p className="text-gray-500">Nenhuma atividade adicionada.</p>
+                                        // Replace text-gray-500 with text-muted-foreground
+                                        <p className="text-muted-foreground">Nenhuma atividade adicionada.</p>
                                       ) : (
                                         <Accordion type="single" collapsible className="w-full">
                                           {selectedPlanForDetails.atividades.map((atividade, index) => (
@@ -1492,105 +1921,47 @@ export default function ServiceSchedulerApp() {
                                                 {atividade.descricaoAtividade.length > 50 && "..."}
                                               </AccordionTrigger>
                                               <AccordionContent>
-                                                <div className="p-4 space-y-3 bg-gray-50 rounded-lg">
+                                                <div className="p-4 space-y-3 bg-muted rounded-lg">
                                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                                                     <div>
                                                       <Label className="font-semibold">Descrição:</Label>
-                                                      <p className="text-gray-700">{atividade.descricaoAtividade}</p>
+                                                      <p className="text-foreground">{atividade.descricaoAtividade}</p>
                                                     </div>
                                                     <div>
                                                       <Label className="font-semibold">Período:</Label>
-                                                      <p className="text-gray-700">
+                                                      <p className="text-foreground">
                                                         {atividade.periodo.from && atividade.periodo.to
                                                           ? `${format(atividade.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(atividade.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
                                                           : "N/A"}
                                                       </p>
                                                     </div>
-                                                    {atividade.pkInicial && (
+                                                    {atividade.pkInicialKm && (
                                                       <div>
                                                         <Label className="font-semibold">Pk Inicial:</Label>
-                                                        <p className="text-gray-700">{atividade.pkInicial}</p>
+                                                        <p className="text-foreground">{`${atividade.pkInicialKm}km ${atividade.pkInicialMeters}m`}</p>
                                                       </div>
                                                     )}
-                                                    {atividade.pkFinal && (
+                                                    {atividade.pkFinalKm && (
                                                       <div>
                                                         <Label className="font-semibold">Pk Final:</Label>
-                                                        <p className="text-gray-700">{atividade.pkFinal}</p>
+                                                        <p className="text-foreground">{`${atividade.pkFinalKm}km ${atividade.pkFinalMeters}m`}</p>
                                                       </div>
                                                     )}
                                                     {atividade.sentido && (
                                                       <div>
                                                         <Label className="font-semibold">Sentido:</Label>
-                                                        <p className="text-gray-700 capitalize">{atividade.sentido}</p>
+                                                        <p className="text-foreground capitalize">
+                                                          {atividade.sentido}
+                                                        </p>
                                                       </div>
                                                     )}
                                                     {atividade.perfil && (
                                                       <div>
                                                         <Label className="font-semibold">Perfil:</Label>
-                                                        <p className="text-gray-700">{atividade.perfil}</p>
+                                                        <p className="text-foreground">{atividade.perfil}</p>
                                                       </div>
                                                     )}
                                                   </div>
-
-                                                  {Object.entries(atividade.detalhesDiarios).length > 0 && (
-                                                    <div className="mt-4 border-t pt-4">
-                                                      <Label className="font-semibold block mb-2">
-                                                        Detalhes Diários:
-                                                      </Label>
-                                                      <div className="space-y-3">
-                                                        {Object.entries(atividade.detalhesDiarios).map(
-                                                          ([dateString, details]) => (
-                                                            <div
-                                                              key={dateString}
-                                                              className="border rounded p-3 bg-white"
-                                                            >
-                                                              <p className="font-medium text-xs text-blue-600 mb-2">
-                                                                {format(new Date(dateString), "PPP", { locale: ptBR })}
-                                                              </p>
-                                                              <div className="grid grid-cols-2 gap-2 text-xs">
-                                                                {details.timeSlot && (
-                                                                  <div>
-                                                                    <span className="font-medium">Horário:</span>{" "}
-                                                                    {details.timeSlot}
-                                                                  </div>
-                                                                )}
-                                                                {details.perfilTipo && (
-                                                                  <div>
-                                                                    <span className="font-medium">Perfil:</span>{" "}
-                                                                    {details.perfilTipo}
-                                                                  </div>
-                                                                )}
-                                                                {details.kmsInicio && (
-                                                                  <div>
-                                                                    <span className="font-medium">Km Início:</span>{" "}
-                                                                    {details.kmsInicio}
-                                                                  </div>
-                                                                )}
-                                                                {details.kmsFim && (
-                                                                  <div>
-                                                                    <span className="font-medium">Km Fim:</span>{" "}
-                                                                    {details.kmsFim}
-                                                                  </div>
-                                                                )}
-                                                                {details.responsavelNome && (
-                                                                  <div>
-                                                                    <span className="font-medium">Responsável:</span>{" "}
-                                                                    {details.responsavelNome}
-                                                                  </div>
-                                                                )}
-                                                                {details.responsavelContacto && (
-                                                                  <div>
-                                                                    <span className="font-medium">Contacto:</span>{" "}
-                                                                    {details.responsavelContacto}
-                                                                  </div>
-                                                                )}
-                                                              </div>
-                                                            </div>
-                                                          ),
-                                                        )}
-                                                      </div>
-                                                    </div>
-                                                  )}
                                                 </div>
                                               </AccordionContent>
                                             </AccordionItem>
@@ -1608,6 +1979,7 @@ export default function ServiceSchedulerApp() {
                             </Dialog>
                           </div>
                           <div className="flex gap-2 mt-3 sm:mt-0">
+                            {/* Keep green colors for action buttons as they are semantic */}
                             <Button
                               onClick={() =>
                                 openConfirmationDialog(
@@ -1709,7 +2081,8 @@ export default function ServiceSchedulerApp() {
                   <div className="grid grid-cols-7 gap-2">
                     {/* Day headers */}
                     {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((day) => (
-                      <div key={day} className="text-center font-semibold text-sm text-gray-600 py-2">
+                      // Replace text-gray-600 with text-muted-foreground
+                      <div key={day} className="text-center font-semibold text-sm text-muted-foreground py-2">
                         {day}
                       </div>
                     ))}
@@ -1728,12 +2101,12 @@ export default function ServiceSchedulerApp() {
                       return (
                         <div
                           key={index}
-                          className={`min-h-[120px] border rounded-lg p-2 ${
-                            isCurrentMonth ? "bg-white" : "bg-gray-50"
-                          }`}
+                          // Replace bg-white and bg-gray-50 with semantic tokens
+                          className={`min-h-[120px] border rounded-lg p-2 ${isCurrentMonth ? "bg-card" : "bg-muted"}`}
                         >
                           <div
-                            className={`text-sm font-medium mb-2 ${isCurrentMonth ? "text-gray-900" : "text-gray-400"}`}
+                            // Replace text-gray-900 and text-gray-400 with semantic tokens
+                            className={`text-sm font-medium mb-2 ${isCurrentMonth ? "text-foreground" : "text-muted-foreground"}`}
                           >
                             {format(day, "d")}
                           </div>
@@ -1779,33 +2152,57 @@ export default function ServiceSchedulerApp() {
 
                                       <div className="flex flex-col space-y-2">
                                         <Label className="font-semibold">Tipo:</Label>
-                                        <span className="text-gray-700">{plan.tipo}</span>
+                                        <span className="text-foreground">{plan.tipo}</span>
                                       </div>
 
                                       <div className="flex flex-col space-y-2">
                                         <Label className="font-semibold">Sublanço:</Label>
-                                        <span className="text-gray-700">{plan.numero || "N/A"}</span>
+                                        <span className="text-foreground">{plan.numero || "N/A"}</span>
+                                      </div>
+
+                                      <div className="flex flex-col space-y-2">
+                                        <Label className="font-semibold">Atividade:</Label>
+                                        <span className="text-foreground">{plan.atividade || "N/A"}</span>
                                       </div>
 
                                       {plan.kmInicial && (
                                         <div className="flex flex-col space-y-2">
                                           <Label className="font-semibold">Km Inicial:</Label>
-                                          <span className="text-gray-700">{plan.kmInicial}</span>
+                                          <span className="text-foreground">{plan.kmInicial}</span>
                                         </div>
                                       )}
 
                                       {plan.kmFinal && (
                                         <div className="flex flex-col space-y-2">
                                           <Label className="font-semibold">Km Final:</Label>
-                                          <span className="text-gray-700">{plan.kmFinal}</span>
+                                          <span className="text-foreground">{plan.kmFinal}</span>
                                         </div>
                                       )}
 
-                                      {/* Display Concessao in Calendar view */}
-                                      {plan.concessao && (
+                                      {(plan.trabalhoFixo || plan.trabalhoMovel) && (
                                         <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Concessão:</Label>
-                                          <span className="text-gray-700">{plan.concessao}</span>
+                                          <Label className="font-semibold">Tipo de Trabalhos:</Label>
+                                          <span className="text-foreground">
+                                            {[
+                                              plan.trabalhoFixo && "Trabalhos Fixos",
+                                              plan.trabalhoMovel && "Trabalhos Móveis",
+                                            ]
+                                              .filter(Boolean)
+                                              .join(", ")}
+                                          </span>
+                                        </div>
+                                      )}
+
+                                      {plan.perigosTemporarios && (
+                                        <div className="flex flex-col space-y-2">
+                                          <Label className="font-semibold">Perigos Temporários:</Label>
+                                          <span className="text-foreground">
+                                            {plan.perigosTemporarios
+                                              .toString()
+                                              .split("-")
+                                              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                                              .join(" ")}
+                                          </span>
                                         </div>
                                       )}
                                     </div>
@@ -1815,7 +2212,8 @@ export default function ServiceSchedulerApp() {
                                         Atividades ({plan.atividades.length}):
                                       </h5>
                                       {plan.atividades.length === 0 ? (
-                                        <p className="text-gray-500">Nenhuma atividade adicionada.</p>
+                                        // Replace text-gray-500 with text-muted-foreground
+                                        <p className="text-muted-foreground">Nenhuma atividade adicionada.</p>
                                       ) : (
                                         <Accordion type="single" collapsible className="w-full">
                                           {plan.atividades.map((atividade, index) => (
@@ -1825,42 +2223,44 @@ export default function ServiceSchedulerApp() {
                                                 {atividade.descricaoAtividade.length > 50 && "..."}
                                               </AccordionTrigger>
                                               <AccordionContent>
-                                                <div className="p-4 space-y-3 bg-gray-50 rounded-lg">
+                                                <div className="p-4 space-y-3 bg-muted rounded-lg">
                                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                                                     <div>
                                                       <Label className="font-semibold">Descrição:</Label>
-                                                      <p className="text-gray-700">{atividade.descricaoAtividade}</p>
+                                                      <p className="text-foreground">{atividade.descricaoAtividade}</p>
                                                     </div>
                                                     <div>
                                                       <Label className="font-semibold">Período:</Label>
-                                                      <p className="text-gray-700">
+                                                      <p className="text-foreground">
                                                         {atividade.periodo.from && atividade.periodo.to
                                                           ? `${format(atividade.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(atividade.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
                                                           : "N/A"}
                                                       </p>
                                                     </div>
-                                                    {atividade.pkInicial && (
+                                                    {atividade.pkInicialKm && (
                                                       <div>
                                                         <Label className="font-semibold">Pk Inicial:</Label>
-                                                        <p className="text-gray-700">{atividade.pkInicial}</p>
+                                                        <p className="text-foreground">{`${atividade.pkInicialKm}km ${atividade.pkInicialMeters}m`}</p>
                                                       </div>
                                                     )}
-                                                    {atividade.pkFinal && (
+                                                    {atividade.pkFinalKm && (
                                                       <div>
                                                         <Label className="font-semibold">Pk Final:</Label>
-                                                        <p className="text-gray-700">{atividade.pkFinal}</p>
+                                                        <p className="text-foreground">{`${atividade.pkFinalKm}km ${atividade.pkFinalMeters}m`}</p>
                                                       </div>
                                                     )}
                                                     {atividade.sentido && (
                                                       <div>
                                                         <Label className="font-semibold">Sentido:</Label>
-                                                        <p className="text-gray-700 capitalize">{atividade.sentido}</p>
+                                                        <p className="text-foreground capitalize">
+                                                          {atividade.sentido}
+                                                        </p>
                                                       </div>
                                                     )}
                                                     {atividade.perfil && (
                                                       <div>
                                                         <Label className="font-semibold">Perfil:</Label>
-                                                        <p className="text-gray-700">{atividade.perfil}</p>
+                                                        <p className="text-foreground">{atividade.perfil}</p>
                                                       </div>
                                                     )}
                                                   </div>
@@ -1880,7 +2280,7 @@ export default function ServiceSchedulerApp() {
                               </Dialog>
                             ))}
                             {plansForDay.length > 2 && (
-                              <div className="text-xs text-gray-500 text-center py-1">
+                              <div className="text-xs text-muted-foreground text-center py-1">
                                 +{plansForDay.length - 2} mais
                               </div>
                             )}
@@ -1894,128 +2294,16 @@ export default function ServiceSchedulerApp() {
                   <div className="flex flex-wrap gap-4 pt-4 border-t">
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-4 rounded bg-green-100 border border-green-300"></div>
-                      <span className="text-sm text-gray-600">Confirmado</span>
+                      <span className="text-sm text-muted-foreground">Confirmado</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-4 rounded bg-yellow-100 border border-yellow-300"></div>
-                      <span className="text-sm text-gray-600">Pendente Confirmação</span>
+                      <span className="text-sm text-muted-foreground">Pendente Confirmação</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-4 rounded bg-red-100 border border-red-300"></div>
-                      <span className="text-sm text-gray-600">Rejeitado</span>
+                      <span className="text-sm text-muted-foreground">Rejeitado</span>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        )}
-
-        {userRole === "cco" && (
-          <Tabs defaultValue={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-1">
-              <TabsTrigger value="dashboard-cco" className="flex items-center space-x-2">
-                <LayoutDashboard className="w-4 h-4" />
-                <span>Dashboard CCO</span>
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="dashboard-cco">
-              <Card className="mb-6">
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <CalendarDays className="w-5 h-5 text-purple-600" />
-                    <span>Planos Confirmados por Semana</span>
-                  </CardTitle>
-                  <CardDescription>Visão geral dos planos de trabalho confirmados semanalmente.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {Object.keys(weeklyPlanCounts).length === 0 ? (
-                    <p className="text-gray-500">Nenhum plano confirmado ainda para exibir o resumo semanal.</p>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {Object.entries(weeklyPlanCounts)
-                        .sort(([weekIdA], [weekIdB]) => weekIdA.localeCompare(weekIdB))
-                        .map(([weekId, count]) => {
-                          const [yearStr, , weekNumStr] = weekId.split("-")
-                          const year = Number.parseInt(yearStr)
-                          const weekNum = Number.parseInt(weekNumStr)
-                          const startDate = startOfWeek(new Date(year, 0, (weekNum - 1) * 7 + 1), {
-                            locale: ptBR,
-                            weekStartsOn: 1,
-                          })
-                          const endDate = new Date(startDate)
-                          endDate.setDate(startDate.getDate() + 4)
-
-                          return (
-                            <div
-                              key={weekId}
-                              className="p-4 border rounded-lg bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
-                              onClick={() => handleViewWeeklyPlans(weekId)}
-                            >
-                              <h5 className="font-semibold text-md">
-                                Semana {weekNum} ({format(startDate, "dd/MM", { locale: ptBR })} -{" "}
-                                {format(endDate, "dd/MM", { locale: ptBR })})
-                              </h5>
-                              <p className="text-2xl font-bold text-blue-600">{count}</p>
-                              <p className="text-sm text-gray-500">planos confirmados</p>
-                            </div>
-                          )
-                        })}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <CalendarDays className="w-5 h-5" />
-                    <span>Planos Aprovados</span>
-                  </CardTitle>
-                  <CardDescription>Lista de todos os planos de trabalho aprovados.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {submittedPlans.filter((plan) => plan.status === "Confirmado").length === 0 ? (
-                      <p className="text-gray-500">Nenhum plano aprovado ainda.</p>
-                    ) : (
-                      submittedPlans
-                        .filter((plan) => plan.status === "Confirmado")
-                        .map((plan) => (
-                          <div key={plan.id} className="flex items-center justify-between p-4 border rounded-lg">
-                            <div className="flex items-center space-x-4">
-                              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                                {plan.tipo === "Manutenção Vegetal" && <Leaf className="w-5 h-5 text-green-600" />}
-                                {plan.tipo === "Beneficiação de Pavimento" && (
-                                  <Road className="w-5 h-5 text-gray-600" />
-                                )}
-                                {plan.tipo === "Manutenção Geral" && <Wrench className="w-5 h-5 text-blue-600" />}
-                              </div>
-                              <div>
-                                <h4 className="font-medium">
-                                  {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
-                                </h4>
-                                <p className="text-sm text-gray-500">
-                                  {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Badge variant="default">{plan.status}</Badge>
-                              <Button
-                                variant={plan.isInISistema ? "default" : "destructive"}
-                                className={
-                                  plan.isInISistema ? "bg-green-500 hover:bg-green-600" : "bg-red-500 hover:bg-red-600"
-                                }
-                                onClick={() => handleToggleISistemaStatus(plan.id)}
-                              >
-                                {plan.isInISistema ? "Inserido em iSistema" : "Não inserido em iSistema"}
-                              </Button>
-                            </div>
-                          </div>
-                        ))
-                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -2034,7 +2322,8 @@ export default function ServiceSchedulerApp() {
             <CardContent>
               <div className="space-y-4">
                 {submittedPlans.length === 0 ? (
-                  <p className="text-gray-500">Nenhum agendamento submetido ainda.</p>
+                  // Replace text-gray-500 with text-muted-foreground
+                  <p className="text-muted-foreground">Nenhum agendamento submetido ainda.</p>
                 ) : (
                   submittedPlans.map((plan) => (
                     <div key={plan.id} className="flex items-center justify-between p-4 border rounded-lg">
@@ -2048,7 +2337,7 @@ export default function ServiceSchedulerApp() {
                           <h4 className="font-medium">
                             {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
                           </h4>
-                          <p className="text-sm text-gray-500">
+                          <p className="text-sm text-muted-foreground">
                             {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
                           </p>
                           {plan.comentarioGO && (
@@ -2153,7 +2442,8 @@ export default function ServiceSchedulerApp() {
           </DialogHeader>
           <div className="py-4 space-y-4">
             {currentWeekPlans.length === 0 ? (
-              <p className="text-gray-500">Nenhum plano aprovado para esta semana.</p>
+              // Replace text-gray-500 with text-muted-foreground
+              <p className="text-muted-foreground">Nenhum plano aprovado para esta semana.</p>
             ) : (
               currentWeekPlans.map((plan) => (
                 <div key={plan.id} className="flex items-center justify-between p-4 border rounded-lg">
@@ -2167,7 +2457,7 @@ export default function ServiceSchedulerApp() {
                       <h4 className="font-medium">
                         {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
                       </h4>
-                      <p className="text-sm text-gray-500">
+                      <p className="text-sm text-muted-foreground">
                         {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
                       </p>
                     </div>
