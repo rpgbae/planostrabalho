@@ -112,6 +112,7 @@ interface SubmittedPlan {
   entidadeExecutanteContato?: string
   sinalizacaoNome?: string
   sinalizacaoContato?: string
+  concessao?: string // Added concessao field to SubmittedPlan interface
 }
 
 export default function ServiceSchedulerApp() {
@@ -188,6 +189,40 @@ export default function ServiceSchedulerApp() {
   const [currentCalendarMonth, setCurrentCalendarMonth] = useState(new Date())
   const [calendarFilterPeriod, setCalendarFilterPeriod] = useState<string>("all")
   const [calendarFilterTipoTrabalho, setCalendarFilterTipoTrabalho] = useState<string>("all")
+
+  const [concessao, setConcessao] = useState("")
+  const [concessoes, setConcessoes] = useState<string[]>([])
+
+  useEffect(() => {
+    const loadConcessoes = async () => {
+      try {
+        // Try to fetch from GitHub first
+        const response = await fetch(
+          "https://raw.githubusercontent.com/rpgbae/Planos-Trabalho/main/public/concessoes.json",
+        )
+        if (response.ok) {
+          const data = await response.json()
+          setConcessoes(Array.isArray(data) ? data : [])
+        } else {
+          // Fallback to local file
+          const localResponse = await fetch("/data/concessoes.json")
+          const localData = await localResponse.json()
+          setConcessoes(Array.isArray(localData) ? localData : [])
+        }
+      } catch (error) {
+        console.error("Erro ao carregar concessões:", error)
+        // Fallback to local file on error
+        try {
+          const localResponse = await fetch("/data/concessoes.json")
+          const localData = await localResponse.json()
+          setConcessoes(Array.isArray(localData) ? localData : [])
+        } catch (localError) {
+          console.error("Erro ao carregar concessões locais:", localError)
+        }
+      }
+    }
+    loadConcessoes()
+  }, [])
 
   useEffect(() => {
     const newBlockedDates = new Set<string>()
@@ -275,6 +310,7 @@ export default function ServiceSchedulerApp() {
     setEntidadeExecutanteContato("")
     setSinalizacaoNome("")
     setSinalizacaoContato("")
+    setConcessao("") // Reset concessao state
   }
 
   const getDatesInRange = (startDate?: Date, endDate?: Date): Date[] => {
@@ -359,6 +395,7 @@ export default function ServiceSchedulerApp() {
     setEntidadeExecutanteContato("")
     setSinalizacaoNome("")
     setSinalizacaoContato("")
+    setConcessao("") // Reset concessao state
   }
 
   const handleAdicionarAtividade = () => {
@@ -482,6 +519,8 @@ export default function ServiceSchedulerApp() {
                 entidadeExecutanteContato,
                 sinalizacaoNome,
                 sinalizacaoContato,
+                // Add concessao to the plan
+                concessao: concessao,
               }
             : plan,
         ),
@@ -511,6 +550,8 @@ export default function ServiceSchedulerApp() {
         entidadeExecutanteContato,
         sinalizacaoNome,
         sinalizacaoContato,
+        // Add concessao to the plan
+        concessao: concessao,
       }
       setSubmittedPlans((prev) => [...prev, newPlan])
       setNotificationDialog({
@@ -581,6 +622,8 @@ export default function ServiceSchedulerApp() {
     setEntidadeExecutanteContato(planToEdit.entidadeExecutanteContato || "")
     setSinalizacaoNome(planToEdit.sinalizacaoNome || "")
     setSinalizacaoContato(planToEdit.sinalizacaoContato || "")
+    // Load concessao when editing a plan
+    setConcessao(planToEdit.concessao || "")
     setActiveTab("vegetal")
   }
 
@@ -764,13 +807,31 @@ export default function ServiceSchedulerApp() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-4">
-                <div>
-                  <AutoEstradasSelect
-                    value={autoEstrada}
-                    onValueChange={setAutoEstrada}
-                    label="Auto Estrada"
-                    placeholder="Selecione a Auto Estrada"
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Added Concessao Select */}
+                  <div>
+                    <Label htmlFor="concessao">Concessão</Label>
+                    <Select value={concessao} onValueChange={setConcessao}>
+                      <SelectTrigger id="concessao">
+                        <SelectValue placeholder="Selecione a Concessão" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {concessoes.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <AutoEstradasSelect
+                      value={autoEstrada}
+                      onValueChange={setAutoEstrada}
+                      label="Auto Estrada"
+                      placeholder="Selecione a Auto Estrada"
+                    />
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -881,7 +942,7 @@ export default function ServiceSchedulerApp() {
                                     <Label className="font-semibold">Período:</Label>
                                     <p className="text-gray-700">
                                       {atividade.periodo.from && atividade.periodo.to
-                                        ? `${format(atividade.periodo.from, "dd/MM/yyyy")} - ${format(atividade.periodo.to, "dd/MM/yyyy")}`
+                                        ? `${format(atividade.periodo.from, "dd/MM/yyyy")}/${format(atividade.periodo.to, "dd/MM/yyyy")}`
                                         : "N/A"}
                                     </p>
                                   </div>
@@ -1366,6 +1427,14 @@ export default function ServiceSchedulerApp() {
                                           {selectedPlanForDetails.status}
                                         </Badge>
                                       </div>
+
+                                      {/* Display Concessao if available */}
+                                      {selectedPlanForDetails.concessao && (
+                                        <div className="flex flex-col space-y-2">
+                                          <Label className="font-semibold">Concessão:</Label>
+                                          <span className="text-gray-700">{selectedPlanForDetails.concessao}</span>
+                                        </div>
+                                      )}
                                     </div>
 
                                     {(selectedPlanForDetails.fiscalizacaoNome ||
@@ -1459,34 +1528,6 @@ export default function ServiceSchedulerApp() {
                                                       <div>
                                                         <Label className="font-semibold">Perfil:</Label>
                                                         <p className="text-gray-700">{atividade.perfil}</p>
-                                                      </div>
-                                                    )}
-                                                    {atividade.localIntervencao && (
-                                                      <div>
-                                                        <Label className="font-semibold">Local de Intervenção:</Label>
-                                                        <p className="text-gray-700 capitalize">
-                                                          {atividade.localIntervencao.replace(/-/g, " ")}
-                                                        </p>
-                                                      </div>
-                                                    )}
-                                                    {atividade.restricoes && (
-                                                      <div>
-                                                        <Label className="font-semibold">Restrições:</Label>
-                                                        <p className="text-gray-700">{atividade.restricoes}</p>
-                                                      </div>
-                                                    )}
-                                                    {atividade.esquema && (
-                                                      <div>
-                                                        <Label className="font-semibold">Esquema:</Label>
-                                                        <p className="text-gray-700">{atividade.esquema}</p>
-                                                      </div>
-                                                    )}
-                                                    {atividade.observacoes && (
-                                                      <div className="md:col-span-2">
-                                                        <Label className="font-semibold">Observações:</Label>
-                                                        <p className="text-gray-700 whitespace-pre-wrap">
-                                                          {atividade.observacoes}
-                                                        </p>
                                                       </div>
                                                     )}
                                                   </div>
@@ -1757,6 +1798,14 @@ export default function ServiceSchedulerApp() {
                                         <div className="flex flex-col space-y-2">
                                           <Label className="font-semibold">Km Final:</Label>
                                           <span className="text-gray-700">{plan.kmFinal}</span>
+                                        </div>
+                                      )}
+
+                                      {/* Display Concessao in Calendar view */}
+                                      {plan.concessao && (
+                                        <div className="flex flex-col space-y-2">
+                                          <Label className="font-semibold">Concessão:</Label>
+                                          <span className="text-gray-700">{plan.concessao}</span>
                                         </div>
                                       )}
                                     </div>
