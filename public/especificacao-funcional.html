@@ -1,0 +1,1235 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Especificação Funcional - Portal de Agendamento de Planos de Trabalho</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            color: #333;
+        }
+        h1 {
+            color: #1a5490;
+            border-bottom: 3px solid #1a5490;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #2563eb;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            border-left: 4px solid #2563eb;
+            padding-left: 15px;
+        }
+        h3 {
+            color: #3b82f6;
+            margin-top: 25px;
+            margin-bottom: 15px;
+        }
+        h4 {
+            color: #60a5fa;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #2563eb;
+            color: white;
+            font-weight: 600;
+        }
+        tr:nth-child(even) {
+            background-color: #f8fafc;
+        }
+        .section {
+            margin-bottom: 40px;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+        .status-pending {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+        .status-approved {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        .status-rejected {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+        .status-edited {
+            background-color: #fed7aa;
+            color: #9a3412;
+        }
+        ul, ol {
+            margin: 15px 0;
+            padding-left: 30px;
+        }
+        li {
+            margin: 8px 0;
+        }
+        .info-box {
+            background-color: #eff6ff;
+            border-left: 4px solid #2563eb;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .warning-box {
+            background-color: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        code {
+            background-color: #f1f5f9;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        @media print {
+            body {
+                padding: 20px;
+            }
+            h2 {
+                page-break-before: always;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Especificação Funcional</h1>
+    <h2>Portal de Agendamento - Planos de Trabalho</h2>
+    
+    <div class="info-box">
+        <strong>Documento:</strong> Especificação Funcional<br>
+        <strong>Versão:</strong> 1.0<br>
+        <strong>Data:</strong> Janeiro 2025<br>
+        <strong>Sistema:</strong> Portal de Agendamento de Planos de Trabalho
+    </div>
+
+    <div class="section">
+        <h2>1. Visão Geral do Sistema</h2>
+        
+        <h3>1.1 Objetivo</h3>
+        <p>O Portal de Agendamento de Planos de Trabalho é uma aplicação web desenvolvida para gerir o planeamento, submissão, aprovação e acompanhamento de planos de trabalho em autoestradas. O sistema permite a coordenação entre prestadores de serviços, gestores operacionais, coordenadores de operações e administradores.</p>
+
+        <h3>1.2 Âmbito</h3>
+        <p>O sistema abrange:</p>
+        <ul>
+            <li>Criação e submissão de planos de trabalho por prestadores de serviços</li>
+            <li>Aprovação e rejeição de planos por gestores operacionais</li>
+            <li>Visualização de calendário com planos aprovados</li>
+            <li>Gestão de atividades e períodos de trabalho</li>
+            <li>Controlo de acessos baseado em perfis de utilizador</li>
+            <li>Dashboard administrativo para gestão de dados</li>
+        </ul>
+
+        <h3>1.3 Tipos de Utilizadores</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Perfil</th>
+                    <th>Email de Acesso</th>
+                    <th>Descrição</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Prestador de Serviços</strong></td>
+                    <td>prestador@teste.pt</td>
+                    <td>Cria e submete planos de trabalho, edita planos rejeitados ou aprovados</td>
+                </tr>
+                <tr>
+                    <td><strong>Gestor Operacional (GO)</strong></td>
+                    <td>go@teste.pt</td>
+                    <td>Aprova ou rejeita planos, remove aprovações, visualiza calendário</td>
+                </tr>
+                <tr>
+                    <td><strong>Coordenador de Operações (CCO)</strong></td>
+                    <td>cco@teste.pt</td>
+                    <td>Visualiza dashboard com estatísticas e relatórios</td>
+                </tr>
+                <tr>
+                    <td><strong>Administrador</strong></td>
+                    <td>admin@teste.pt</td>
+                    <td>Gere dados mestres (concessões, autoestradas, tipos de trabalho, etc.)</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>2. Funcionalidades por Perfil de Utilizador</h2>
+
+        <h3>2.1 Prestador de Serviços</h3>
+        
+        <h4>2.1.1 Criação de Plano de Trabalho</h4>
+        <p>O prestador pode criar um novo plano de trabalho preenchendo os seguintes campos:</p>
+        
+        <h5>Cabeçalho do Plano:</h5>
+        <ul>
+            <li><strong>Concessão:</strong> Seleção da concessão (ex: Ascendi, Brisa, etc.)</li>
+            <li><strong>Auto Estrada:</strong> Seleção da autoestrada (filtrada pela concessão selecionada)</li>
+            <li><strong>Km Inicial:</strong> Quilómetro inicial do plano</li>
+            <li><strong>Km Final:</strong> Quilómetro final do plano</li>
+            <li><strong>Sublanço:</strong> Identificador do sublanço (calculado automaticamente ou inserido manualmente)</li>
+            <li><strong>Tipo de Trabalho:</strong> Categoria do trabalho (ex: PAVIMENTOS, TALUDES, SINALIZAÇÃO HORIZONTAL, etc.)</li>
+            <li><strong>Atividade:</strong> Atividade específica dentro do tipo de trabalho (filtrada pelo tipo selecionado)</li>
+            <li><strong>Urgente:</strong> Checkbox para marcar planos urgentes</li>
+        </ul>
+
+        <h5>Características do Trabalho:</h5>
+        <ul>
+            <li><strong>Trabalho Fixo:</strong> Checkbox para trabalhos em local fixo</li>
+            <li><strong>Trabalho Móvel:</strong> Checkbox para trabalhos móveis</li>
+            <li><strong>Perigos Temporários:</strong> Checkbox para trabalhos com perigos temporários</li>
+        </ul>
+
+        <h5>Contactos:</h5>
+        <p>O sistema requer informações de contacto para três entidades:</p>
+        <ul>
+            <li><strong>Fiscalização:</strong> Nome e contacto do responsável pela fiscalização</li>
+            <li><strong>Entidade Executante:</strong> Nome e contacto da entidade que executa o trabalho</li>
+            <li><strong>Sinalização:</strong> Nome e contacto do responsável pela sinalização</li>
+        </ul>
+
+        <h4>2.1.2 Gestão de Atividades</h4>
+        <p>Cada plano pode conter múltiplas atividades. Para cada atividade, o prestador define:</p>
+        <ul>
+            <li><strong>Descrição da Atividade:</strong> Texto descritivo da atividade</li>
+            <li><strong>Período:</strong> Data de início e fim da atividade (seleção de intervalo de datas)</li>
+            <li><strong>PK Inicial:</strong> Ponto quilométrico inicial (formato: X Km + Y m)</li>
+            <li><strong>PK Final:</strong> Ponto quilométrico final (formato: X Km + Y m)</li>
+        </ul>
+
+        <h4>2.1.3 Detalhes Diários</h4>
+        <p>Para cada dia dentro do período de uma atividade, o prestador pode especificar:</p>
+        <ul>
+            <li><strong>Hora de Início:</strong> Hora de início do trabalho (formato 24h: HH:MM)</li>
+            <li><strong>Hora de Fim:</strong> Hora de fim do trabalho (formato 24h: HH:MM)</li>
+            <li><strong>Todo o Dia:</strong> Checkbox para trabalhos que ocupam o dia inteiro (00:00 - 23:59)</li>
+            <li><strong>PK Inicial e Final:</strong> Pontos quilométricos específicos para o dia</li>
+            <li><strong>Perfil:</strong> Perfil de trabalho (ex: 1 x 1, 1 x 2, 2 x 2, etc.)</li>
+            <li><strong>Restrições:</strong> Seleção múltipla de restrições (filtradas pelo perfil selecionado)</li>
+            <li><strong>Sentido:</strong> Sentido do trabalho (crescente, decrescente, ambos)</li>
+            <li><strong>Tipo de Trabalho:</strong> Tipo específico para o dia</li>
+            <li><strong>Local da Intervenção:</strong> Local específico da intervenção</li>
+            <li><strong>Esquema:</strong> Esquema de sinalização (filtrado pelo tipo de trabalho)</li>
+            <li><strong>Observações:</strong> Campo de texto livre para observações</li>
+        </ul>
+
+        <div class="info-box">
+            <strong>Validações Automáticas:</strong>
+            <ul>
+                <li>A hora de fim deve ser posterior à hora de início</li>
+                <li>O formato das horas deve ser HH:MM (24 horas)</li>
+                <li>Pelo menos uma atividade deve ser adicionada antes da submissão</li>
+                <li>O sublanço é calculado automaticamente com base nos Km inicial e final</li>
+            </ul>
+        </div>
+
+        <h4>2.1.4 Submissão de Plano</h4>
+        <p>Após preencher todos os campos obrigatórios e adicionar pelo menos uma atividade, o prestador pode submeter o plano. O plano fica com o status:</p>
+        <p><span class="status-badge status-pending">Pendente Aprovação</span></p>
+
+        <h4>2.1.5 Edição de Planos</h4>
+        <p>O prestador pode editar planos nos seguintes estados:</p>
+        <ul>
+            <li><strong>Pendente Aprovação:</strong> Edição livre, mantém o status após resubmissão</li>
+            <li><strong>Rejeitado:</strong> Edição livre, muda para "Pendente Aprovação" após resubmissão</li>
+            <li><strong>Aprovado (Confirmado):</strong> Edição permitida, muda para "Editado - Pendente Aprovação" após resubmissão</li>
+        </ul>
+
+        <div class="warning-box">
+            <strong>Importante:</strong> Quando um plano aprovado é editado e resubmetido, ele volta para a fila de aprovação com o status <span class="status-badge status-edited">Editado - Pendente Aprovação</span> e requer nova aprovação do Gestor Operacional.
+        </div>
+
+        <h4>2.1.6 Visualização de Planos</h4>
+        <p>O prestador pode visualizar todos os seus planos submetidos na secção "Todos os Agendamentos", onde pode ver:</p>
+        <ul>
+            <li>Lista de todos os planos com status</li>
+            <li>Número de atividades por plano</li>
+            <li>Comentários do Gestor Operacional (em caso de rejeição)</li>
+            <li>Botão "Editar" para planos editáveis</li>
+        </ul>
+
+        <h3>2.2 Gestor Operacional (GO)</h3>
+
+        <h4>2.2.1 Aprovação de Planos</h4>
+        <p>O GO tem acesso a um separador dedicado "Aprovação de Planos" onde pode:</p>
+        <ul>
+            <li>Visualizar todos os planos com status "Pendente Aprovação" ou "Editado - Pendente Aprovação"</li>
+            <li>Ver detalhes completos de cada plano (cabeçalho, contactos, atividades, detalhes diários)</li>
+            <li>Aprovar planos (muda status para <span class="status-badge status-approved">Aprovado</span>)</li>
+            <li>Rejeitar planos com comentário obrigatório (muda status para <span class="status-badge status-rejected">Rejeitado</span>)</li>
+        </ul>
+
+        <h5>Processo de Aprovação:</h5>
+        <ol>
+            <li>GO clica em "Ver Detalhes" para analisar o plano completo</li>
+            <li>Revisa todas as informações (cabeçalho, contactos, atividades, períodos)</li>
+            <li>Clica em "Aprovar" ou "Rejeitar"</li>
+            <li>Se rejeitar, deve inserir um comentário explicativo</li>
+            <li>Confirma a ação no diálogo de confirmação</li>
+            <li>O prestador é notificado da decisão</li>
+        </ol>
+
+        <h4>2.2.2 Remoção de Aprovação</h4>
+        <p>O GO tem a capacidade exclusiva de remover aprovações de planos já aprovados:</p>
+        <ul>
+            <li>Na secção "Todos os Agendamentos", planos aprovados mostram o botão "Remover Aprovação"</li>
+            <li>Este botão é visível apenas para o perfil GO (go@teste.pt)</li>
+            <li>Ao clicar, abre um diálogo solicitando o motivo da remoção</li>
+            <li>Após confirmação, o plano volta ao status "Pendente Aprovação"</li>
+            <li>O motivo da remoção é guardado no campo comentarioGO</li>
+        </ul>
+
+        <h4>2.2.3 Visualização de Calendário</h4>
+        <p>O GO tem acesso a um calendário interativo que mostra:</p>
+        <ul>
+            <li>Todos os planos aprovados organizados por data</li>
+            <li>Indicadores visuais para dias com planos agendados</li>
+            <li>Detalhes dos planos ao clicar em cada dia</li>
+            <li>Informações de PK, perfil, restrições, sentido, tipo de trabalho, local e esquema</li>
+        </ul>
+
+        <h3>2.3 Coordenador de Operações (CCO)</h3>
+        <p>O CCO tem acesso a um dashboard com:</p>
+        <ul>
+            <li>Estatísticas gerais de planos (total, pendentes, aprovados, rejeitados)</li>
+            <li>Visualizações gráficas de dados</li>
+            <li>Relatórios de atividades por período</li>
+            <li>Análise de desempenho e métricas operacionais</li>
+        </ul>
+
+        <h3>2.4 Administrador</h3>
+        <p>O administrador tem acesso a um painel de gestão de dados mestres onde pode:</p>
+        <ul>
+            <li>Gerir concessões (adicionar, editar, remover)</li>
+            <li>Gerir autoestradas e associações com concessões</li>
+            <li>Gerir tipos de trabalho e atividades associadas</li>
+            <li>Gerir perfis e restrições</li>
+            <li>Gerir esquemas de sinalização</li>
+            <li>Importar/exportar dados em formato CSV</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>3. Estados e Fluxos de Trabalho</h2>
+
+        <h3>3.1 Estados de um Plano</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Estado</th>
+                    <th>Descrição</th>
+                    <th>Ações Disponíveis</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><span class="status-badge status-pending">Pendente Aprovação</span></td>
+                    <td>Plano submetido aguardando aprovação do GO</td>
+                    <td>
+                        <strong>Prestador:</strong> Editar<br>
+                        <strong>GO:</strong> Aprovar, Rejeitar
+                    </td>
+                </tr>
+                <tr>
+                    <td><span class="status-badge status-approved">Aprovado</span></td>
+                    <td>Plano aprovado pelo GO e agendado no calendário</td>
+                    <td>
+                        <strong>Prestador:</strong> Editar (volta para "Editado - Pendente Aprovação")<br>
+                        <strong>GO:</strong> Remover Aprovação
+                    </td>
+                </tr>
+                <tr>
+                    <td><span class="status-badge status-rejected">Rejeitado</span></td>
+                    <td>Plano rejeitado pelo GO com comentário</td>
+                    <td>
+                        <strong>Prestador:</strong> Editar e resubmeter (volta para "Pendente Aprovação")
+                    </td>
+                </tr>
+                <tr>
+                    <td><span class="status-badge status-edited">Editado - Pendente Aprovação</span></td>
+                    <td>Plano anteriormente aprovado que foi editado e resubmetido</td>
+                    <td>
+                        <strong>Prestador:</strong> Editar<br>
+                        <strong>GO:</strong> Aprovar, Rejeitar
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>3.2 Fluxo de Trabalho Principal</h3>
+        <ol>
+            <li><strong>Criação:</strong> Prestador cria novo plano de trabalho</li>
+            <li><strong>Adição de Atividades:</strong> Prestador adiciona uma ou mais atividades com períodos e detalhes</li>
+            <li><strong>Preenchimento de Detalhes Diários:</strong> Para cada dia de cada atividade, prestador preenche horários e especificações</li>
+            <li><strong>Submissão:</strong> Prestador submete o plano (status: Pendente Aprovação)</li>
+            <li><strong>Revisão:</strong> GO revisa o plano na fila de aprovação</li>
+            <li><strong>Decisão:</strong>
+                <ul>
+                    <li><strong>Se Aprovar:</strong> Plano fica com status "Aprovado" e aparece no calendário</li>
+                    <li><strong>Se Rejeitar:</strong> Plano fica com status "Rejeitado" e prestador recebe comentário</li>
+                </ul>
+            </li>
+            <li><strong>Pós-Aprovação:</strong>
+                <ul>
+                    <li>Prestador pode editar plano aprovado (volta para "Editado - Pendente Aprovação")</li>
+                    <li>GO pode remover aprovação (volta para "Pendente Aprovação")</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h3>3.3 Fluxo de Edição de Plano Aprovado</h3>
+        <ol>
+            <li>Prestador clica em "Editar" num plano com status "Aprovado"</li>
+            <li>Sistema carrega todos os dados do plano no formulário</li>
+            <li>Sistema marca internamente que está a editar um plano aprovado (<code>isEditingApprovedPlan = true</code>)</li>
+            <li>Prestador faz as alterações necessárias</li>
+            <li>Prestador clica em "Submeter Plano de Trabalho"</li>
+            <li>Sistema muda o status para "Editado - Pendente Aprovação"</li>
+            <li>Plano aparece na fila de aprovação do GO para nova revisão</li>
+            <li>GO aprova ou rejeita o plano editado</li>
+        </ol>
+    </div>
+
+    <div class="section">
+        <h2>4. Estrutura de Dados</h2>
+
+        <h3>4.1 Plano de Trabalho (WorkPlan)</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Campo</th>
+                    <th>Tipo</th>
+                    <th>Descrição</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>id</td>
+                    <td>string</td>
+                    <td>Identificador único do plano</td>
+                </tr>
+                <tr>
+                    <td>numero</td>
+                    <td>string</td>
+                    <td>Número/código do sublanço</td>
+                </tr>
+                <tr>
+                    <td>concessao</td>
+                    <td>string</td>
+                    <td>Concessão selecionada</td>
+                </tr>
+                <tr>
+                    <td>autoEstrada</td>
+                    <td>string</td>
+                    <td>Autoestrada selecionada</td>
+                </tr>
+                <tr>
+                    <td>kmInicial</td>
+                    <td>string</td>
+                    <td>Quilómetro inicial do plano</td>
+                </tr>
+                <tr>
+                    <td>kmFinal</td>
+                    <td>string</td>
+                    <td>Quilómetro final do plano</td>
+                </tr>
+                <tr>
+                    <td>tipoTrabalho</td>
+                    <td>string</td>
+                    <td>Tipo de trabalho (PAVIMENTOS, TALUDES, etc.)</td>
+                </tr>
+                <tr>
+                    <td>atividade</td>
+                    <td>string</td>
+                    <td>Atividade específica dentro do tipo</td>
+                </tr>
+                <tr>
+                    <td>atividades</td>
+                    <td>Atividade[]</td>
+                    <td>Array de atividades do plano</td>
+                </tr>
+                <tr>
+                    <td>status</td>
+                    <td>enum</td>
+                    <td>"Pendente Aprovação" | "Confirmado" | "Rejeitado" | "Editado - Pendente Aprovação"</td>
+                </tr>
+                <tr>
+                    <td>tipo</td>
+                    <td>enum</td>
+                    <td>"Manutenção Vegetal" | "Beneficiação de Pavimento" | "Manutenção Geral"</td>
+                </tr>
+                <tr>
+                    <td>trabalhoFixo</td>
+                    <td>boolean</td>
+                    <td>Indica se é trabalho fixo</td>
+                </tr>
+                <tr>
+                    <td>trabalhoMovel</td>
+                    <td>boolean</td>
+                    <td>Indica se é trabalho móvel</td>
+                </tr>
+                <tr>
+                    <td>perigosTemporarios</td>
+                    <td>boolean</td>
+                    <td>Indica se há perigos temporários</td>
+                </tr>
+                <tr>
+                    <td>fiscalizacaoNome</td>
+                    <td>string</td>
+                    <td>Nome do responsável pela fiscalização</td>
+                </tr>
+                <tr>
+                    <td>fiscalizacaoContato</td>
+                    <td>string</td>
+                    <td>Contacto da fiscalização</td>
+                </tr>
+                <tr>
+                    <td>entidadeExecutanteNome</td>
+                    <td>string</td>
+                    <td>Nome da entidade executante</td>
+                </tr>
+                <tr>
+                    <td>entidadeExecutanteContato</td>
+                    <td>string</td>
+                    <td>Contacto da entidade executante</td>
+                </tr>
+                <tr>
+                    <td>sinalizacaoNome</td>
+                    <td>string</td>
+                    <td>Nome do responsável pela sinalização</td>
+                </tr>
+                <tr>
+                    <td>sinalizacaoContato</td>
+                    <td>string</td>
+                    <td>Contacto da sinalização</td>
+                </tr>
+                <tr>
+                    <td>comentarioGO</td>
+                    <td>string (opcional)</td>
+                    <td>Comentário do Gestor Operacional (rejeição ou remoção de aprovação)</td>
+                </tr>
+                <tr>
+                    <td>isInISistema</td>
+                    <td>boolean</td>
+                    <td>Indica se o plano está no sistema I</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>4.2 Atividade</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Campo</th>
+                    <th>Tipo</th>
+                    <th>Descrição</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>id</td>
+                    <td>string</td>
+                    <td>Identificador único da atividade</td>
+                </tr>
+                <tr>
+                    <td>descricaoAtividade</td>
+                    <td>string</td>
+                    <td>Descrição textual da atividade</td>
+                </tr>
+                <tr>
+                    <td>periodo</td>
+                    <td>DateRange</td>
+                    <td>Período da atividade (data início e fim)</td>
+                </tr>
+                <tr>
+                    <td>pkInicialKm</td>
+                    <td>string</td>
+                    <td>Quilómetros do PK inicial</td>
+                </tr>
+                <tr>
+                    <td>pkInicialMeters</td>
+                    <td>string</td>
+                    <td>Metros do PK inicial</td>
+                </tr>
+                <tr>
+                    <td>pkFinalKm</td>
+                    <td>string</td>
+                    <td>Quilómetros do PK final</td>
+                </tr>
+                <tr>
+                    <td>pkFinalMeters</td>
+                    <td>string</td>
+                    <td>Metros do PK final</td>
+                </tr>
+                <tr>
+                    <td>detalhesDiarios</td>
+                    <td>Object</td>
+                    <td>Mapa de detalhes por data (chave: "yyyy-MM-dd")</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>4.3 Detalhes Diários (DayData)</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Campo</th>
+                    <th>Tipo</th>
+                    <th>Descrição</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>date</td>
+                    <td>Date</td>
+                    <td>Data do dia</td>
+                </tr>
+                <tr>
+                    <td>horaInicio</td>
+                    <td>string</td>
+                    <td>Hora de início (formato HH:MM)</td>
+                </tr>
+                <tr>
+                    <td>horaFim</td>
+                    <td>string</td>
+                    <td>Hora de fim (formato HH:MM)</td>
+                </tr>
+                <tr>
+                    <td>todoDia</td>
+                    <td>boolean</td>
+                    <td>Indica se o trabalho ocupa todo o dia</td>
+                </tr>
+                <tr>
+                    <td>pkInicialKm</td>
+                    <td>string</td>
+                    <td>Quilómetros do PK inicial do dia</td>
+                </tr>
+                <tr>
+                    <td>pkInicialMeters</td>
+                    <td>string</td>
+                    <td>Metros do PK inicial do dia</td>
+                </tr>
+                <tr>
+                    <td>pkFinalKm</td>
+                    <td>string</td>
+                    <td>Quilómetros do PK final do dia</td>
+                </tr>
+                <tr>
+                    <td>pkFinalMeters</td>
+                    <td>string</td>
+                    <td>Metros do PK final do dia</td>
+                </tr>
+                <tr>
+                    <td>sentido</td>
+                    <td>string</td>
+                    <td>Sentido do trabalho (crescente, decrescente, ambos)</td>
+                </tr>
+                <tr>
+                    <td>perfil</td>
+                    <td>string</td>
+                    <td>Perfil de trabalho (1 x 1, 1 x 2, etc.)</td>
+                </tr>
+                <tr>
+                    <td>tipoTrabalhoDay</td>
+                    <td>string</td>
+                    <td>Tipo de trabalho específico do dia</td>
+                </tr>
+                <tr>
+                    <td>localIntervencao</td>
+                    <td>string</td>
+                    <td>Local da intervenção</td>
+                </tr>
+                <tr>
+                    <td>restricoes</td>
+                    <td>string[]</td>
+                    <td>Array de restrições aplicáveis</td>
+                </tr>
+                <tr>
+                    <td>esquema</td>
+                    <td>string</td>
+                    <td>Esquema de sinalização</td>
+                </tr>
+                <tr>
+                    <td>observacoes</td>
+                    <td>string</td>
+                    <td>Observações adicionais</td>
+                </tr>
+                <tr>
+                    <td>sublanco</td>
+                    <td>string</td>
+                    <td>Sublanço calculado automaticamente</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>5. Regras de Negócio</h2>
+
+        <h3>5.1 Validações de Formulário</h3>
+        <ul>
+            <li>Todos os campos obrigatórios devem ser preenchidos antes da submissão</li>
+            <li>Pelo menos uma atividade deve ser adicionada ao plano</li>
+            <li>O formato das horas deve ser HH:MM (24 horas)</li>
+            <li>A hora de fim deve ser posterior à hora de início</li>
+            <li>O PK final deve ser maior que o PK inicial</li>
+            <li>O Km final deve ser maior ou igual ao Km inicial</li>
+        </ul>
+
+        <h3>5.2 Cálculo Automático de Sublanço</h3>
+        <p>O sublanço é calculado automaticamente com base nos campos:</p>
+        <ul>
+            <li>Auto Estrada selecionada</li>
+            <li>Km Inicial e Km Final</li>
+        </ul>
+        <p>Formato: <code>[AutoEstrada] - Cidade [KmInicial] - Cidade [KmFinal]</code></p>
+
+        <h3>5.3 Filtragem de Opções</h3>
+        <ul>
+            <li><strong>Autoestradas:</strong> Filtradas pela concessão selecionada</li>
+            <li><strong>Atividades:</strong> Filtradas pelo tipo de trabalho selecionado</li>
+            <li><strong>Restrições:</strong> Filtradas pelo perfil selecionado</li>
+            <li><strong>Esquemas:</strong> Filtrados pelo tipo de trabalho do dia</li>
+        </ul>
+
+        <h3>5.4 Permissões por Perfil</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Ação</th>
+                    <th>Prestador</th>
+                    <th>GO</th>
+                    <th>CCO</th>
+                    <th>Admin</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Criar Plano</td>
+                    <td>✓</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                </tr>
+                <tr>
+                    <td>Editar Plano Próprio</td>
+                    <td>✓</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                </tr>
+                <tr>
+                    <td>Aprovar Plano</td>
+                    <td>✗</td>
+                    <td>✓</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                </tr>
+                <tr>
+                    <td>Rejeitar Plano</td>
+                    <td>✗</td>
+                    <td>✓</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                </tr>
+                <tr>
+                    <td>Remover Aprovação</td>
+                    <td>✗</td>
+                    <td>✓</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                </tr>
+                <tr>
+                    <td>Ver Calendário</td>
+                    <td>✗</td>
+                    <td>✓</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                </tr>
+                <tr>
+                    <td>Ver Dashboard CCO</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                    <td>✓</td>
+                    <td>✗</td>
+                </tr>
+                <tr>
+                    <td>Gerir Dados Mestres</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                    <td>✓</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>5.5 Notificações</h3>
+        <p>O sistema apresenta notificações (diálogos) nas seguintes situações:</p>
+        <ul>
+            <li>Submissão bem-sucedida de plano</li>
+            <li>Aprovação de plano</li>
+            <li>Rejeição de plano</li>
+            <li>Remoção de aprovação</li>
+            <li>Erros de validação</li>
+            <li>Conflitos de horário</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>6. Interface do Utilizador</h2>
+
+        <h3>6.1 Componentes Principais</h3>
+        <ul>
+            <li><strong>Ecrã de Login:</strong> Autenticação com email e password</li>
+            <li><strong>Cabeçalho:</strong> Título da aplicação, nome do utilizador, botão de logout</li>
+            <li><strong>Navegação por Tabs:</strong> Diferentes secções conforme o perfil do utilizador</li>
+            <li><strong>Formulário de Plano:</strong> Formulário multi-secção para criação/edição de planos</li>
+            <li><strong>Lista de Atividades:</strong> Gestão de atividades com acordeões expansíveis</li>
+            <li><strong>Calendário:</strong> Visualização mensal com indicadores de planos</li>
+            <li><strong>Diálogos:</strong> Confirmações, detalhes de planos, notificações</li>
+        </ul>
+
+        <h3>6.2 Padrões de Design</h3>
+        <ul>
+            <li>Design responsivo (mobile-first)</li>
+            <li>Utilização de componentes shadcn/ui</li>
+            <li>Esquema de cores consistente com badges de status</li>
+            <li>Feedback visual para ações do utilizador</li>
+            <li>Validação em tempo real de campos de formulário</li>
+        </ul>
+
+        <h3>6.3 Acessibilidade</h3>
+        <ul>
+            <li>Labels associados a todos os inputs</li>
+            <li>Navegação por teclado suportada</li>
+            <li>Contraste adequado de cores</li>
+            <li>Mensagens de erro claras e descritivas</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>7. Dados Mestres</h2>
+
+        <h3>7.1 Concessões</h3>
+        <p>Lista de concessões disponíveis no sistema (geridas pelo Administrador):</p>
+        <ul>
+            <li>Ascendi</li>
+            <li>Brisa</li>
+            <li>Via do Infante</li>
+            <li>Outras concessões configuráveis</li>
+        </ul>
+
+        <h3>7.2 Autoestradas</h3>
+        <p>Cada autoestrada está associada a uma concessão. Exemplos:</p>
+        <ul>
+            <li>A1, A2, A3, A4, A5, A6, A7, A8, A9, A10</li>
+            <li>A11, A12, A13, A14, A15, A16, A17, A19, A20, A21</li>
+            <li>A22, A23, A24, A25, A26, A27, A28, A29, A30, A32</li>
+        </ul>
+
+        <h3>7.3 Tipos de Trabalho</h3>
+        <p>Categorias principais de trabalho:</p>
+        <ul>
+            <li>PAVIMENTOS</li>
+            <li>TALUDES</li>
+            <li>SINALIZAÇÃO HORIZONTAL</li>
+            <li>SINALIZAÇÃO VERTICAL</li>
+            <li>OBRAS DE ARTE</li>
+            <li>DRENAGEM</li>
+            <li>EQUIPAMENTOS</li>
+            <li>LIMPEZA</li>
+            <li>Outros tipos configuráveis</li>
+        </ul>
+
+        <h3>7.4 Perfis</h3>
+        <p>Perfis de trabalho disponíveis:</p>
+        <ul>
+            <li>1 x 1 (uma via em cada sentido)</li>
+            <li>1 x 2 (uma via num sentido, duas no outro)</li>
+            <li>2 x 2 (duas vias em cada sentido)</li>
+            <li>2 x 3 (duas vias num sentido, três no outro)</li>
+            <li>3 x 3 (três vias em cada sentido)</li>
+            <li>Outros perfis configuráveis</li>
+        </ul>
+
+        <h3>7.5 Restrições</h3>
+        <p>Restrições associadas a cada perfil (exemplos):</p>
+        <ul>
+            <li>Berma</li>
+            <li>Via de Trânsito</li>
+            <li>Via de Ultrapassagem</li>
+            <li>Faixa de Rodagem</li>
+            <li>Separador Central</li>
+            <li>Outras restrições configuráveis</li>
+        </ul>
+
+        <h3>7.6 Sentidos</h3>
+        <ul>
+            <li>Crescente</li>
+            <li>Decrescente</li>
+            <li>Ambos</li>
+        </ul>
+
+        <h3>7.7 Locais de Intervenção</h3>
+        <ul>
+            <li>Área de Serviço</li>
+            <li>No-Ramo</li>
+            <li>Área de Descanso</li>
+            <li>Outros locais configuráveis</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>8. Integrações e Dependências</h2>
+
+        <h3>8.1 Tecnologias Utilizadas</h3>
+        <ul>
+            <li><strong>Framework:</strong> Next.js (App Router)</li>
+            <li><strong>Linguagem:</strong> TypeScript</li>
+            <li><strong>UI Components:</strong> shadcn/ui (Radix UI)</li>
+            <li><strong>Styling:</strong> Tailwind CSS v4</li>
+            <li><strong>Gestão de Datas:</strong> date-fns</li>
+            <li><strong>Ícones:</strong> Lucide React</li>
+        </ul>
+
+        <h3>8.2 Armazenamento de Dados</h3>
+        <p>Atualmente, os dados são armazenados em:</p>
+        <ul>
+            <li><strong>Estado Local (React State):</strong> Dados de sessão e formulários</li>
+            <li><strong>Ficheiros JSON:</strong> Dados mestres (concessões, autoestradas, tipos de trabalho, etc.)</li>
+            <li><strong>Ficheiros CSV:</strong> Relações entre entidades (tipo-atividade, perfil-restrições, etc.)</li>
+        </ul>
+
+        <div class="warning-box">
+            <strong>Nota:</strong> Para ambiente de produção, recomenda-se integração com base de dados (PostgreSQL, MySQL, etc.) e API backend para persistência de dados.
+        </div>
+
+        <h3>8.3 Ficheiros de Configuração</h3>
+        <ul>
+            <li><code>public/data/concessoes.json</code> - Lista de concessões</li>
+            <li><code>public/data/options.json</code> - Opções gerais do sistema</li>
+            <li><code>public/data/tipo-atividade.csv</code> - Relação tipo de trabalho → atividades</li>
+            <li><code>public/data/perfil-restricoes.csv</code> - Relação perfil → restrições</li>
+            <li><code>public/data/tipo-esquema.csv</code> - Relação tipo de trabalho → esquemas</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>9. Casos de Uso Detalhados</h2>
+
+        <h3>9.1 UC01 - Criar e Submeter Plano de Trabalho</h3>
+        <p><strong>Ator Principal:</strong> Prestador de Serviços</p>
+        <p><strong>Pré-condições:</strong> Utilizador autenticado como Prestador</p>
+        <p><strong>Fluxo Principal:</strong></p>
+        <ol>
+            <li>Prestador acede ao formulário de criação de plano</li>
+            <li>Seleciona a concessão</li>
+            <li>Seleciona a autoestrada (filtrada pela concessão)</li>
+            <li>Insere Km inicial e Km final</li>
+            <li>Sistema calcula automaticamente o sublanço</li>
+            <li>Seleciona tipo de trabalho</li>
+            <li>Seleciona atividade (filtrada pelo tipo)</li>
+            <li>Marca checkboxes de características (trabalho fixo/móvel, perigos temporários)</li>
+            <li>Preenche contactos (fiscalização, entidade executante, sinalização)</li>
+            <li>Clica em "Adicionar Atividade"</li>
+            <li>Preenche descrição da atividade</li>
+            <li>Seleciona período (data início e fim)</li>
+            <li>Insere PK inicial e final da atividade</li>
+            <li>Para cada dia do período, preenche detalhes diários</li>
+            <li>Clica em "Guardar Atividade"</li>
+            <li>Repete passos 10-15 para adicionar mais atividades (opcional)</li>
+            <li>Clica em "Submeter Plano de Trabalho"</li>
+            <li>Sistema valida todos os campos</li>
+            <li>Sistema cria plano com status "Pendente Aprovação"</li>
+            <li>Sistema apresenta notificação de sucesso</li>
+            <li>Sistema limpa o formulário</li>
+        </ol>
+        <p><strong>Pós-condições:</strong> Plano criado e visível na fila de aprovação do GO</p>
+
+        <h3>9.2 UC02 - Aprovar Plano de Trabalho</h3>
+        <p><strong>Ator Principal:</strong> Gestor Operacional</p>
+        <p><strong>Pré-condições:</strong> Utilizador autenticado como GO, existe pelo menos um plano pendente</p>
+        <p><strong>Fluxo Principal:</strong></p>
+        <ol>
+            <li>GO acede ao separador "Aprovação de Planos"</li>
+            <li>Visualiza lista de planos pendentes</li>
+            <li>Clica em "Ver Detalhes" num plano</li>
+            <li>Revisa cabeçalho, contactos e atividades</li>
+            <li>Clica em "Aprovar"</li>
+            <li>Sistema apresenta diálogo de confirmação</li>
+            <li>GO confirma a aprovação</li>
+            <li>Sistema muda status do plano para "Aprovado"</li>
+            <li>Sistema adiciona plano ao calendário</li>
+            <li>Sistema apresenta notificação de sucesso</li>
+        </ol>
+        <p><strong>Pós-condições:</strong> Plano aprovado e visível no calendário</p>
+
+        <h3>9.3 UC03 - Rejeitar Plano de Trabalho</h3>
+        <p><strong>Ator Principal:</strong> Gestor Operacional</p>
+        <p><strong>Pré-condições:</strong> Utilizador autenticado como GO, existe pelo menos um plano pendente</p>
+        <p><strong>Fluxo Principal:</strong></p>
+        <ol>
+            <li>GO acede ao separador "Aprovação de Planos"</li>
+            <li>Visualiza lista de planos pendentes</li>
+            <li>Clica em "Ver Detalhes" num plano</li>
+            <li>Identifica problemas no plano</li>
+            <li>Clica em "Rejeitar"</li>
+            <li>Sistema apresenta diálogo solicitando comentário</li>
+            <li>GO insere motivo da rejeição</li>
+            <li>GO confirma a rejeição</li>
+            <li>Sistema muda status do plano para "Rejeitado"</li>
+            <li>Sistema guarda comentário no campo comentarioGO</li>
+            <li>Sistema apresenta notificação de sucesso</li>
+        </ol>
+        <p><strong>Pós-condições:</strong> Plano rejeitado, prestador pode visualizar comentário e editar</p>
+
+        <h3>9.4 UC04 - Editar Plano Aprovado</h3>
+        <p><strong>Ator Principal:</strong> Prestador de Serviços</p>
+        <p><strong>Pré-condições:</strong> Utilizador autenticado como Prestador, existe plano com status "Aprovado"</p>
+        <p><strong>Fluxo Principal:</strong></p>
+        <ol>
+            <li>Prestador acede à secção "Todos os Agendamentos"</li>
+            <li>Localiza plano aprovado que deseja editar</li>
+            <li>Clica em "Editar"</li>
+            <li>Sistema carrega dados do plano no formulário</li>
+            <li>Sistema marca internamente que está a editar plano aprovado</li>
+            <li>Prestador faz alterações necessárias</li>
+            <li>Prestador clica em "Submeter Plano de Trabalho"</li>
+            <li>Sistema valida alterações</li>
+            <li>Sistema muda status para "Editado - Pendente Aprovação"</li>
+            <li>Sistema apresenta notificação informando nova submissão</li>
+            <li>Plano volta para fila de aprovação do GO</li>
+        </ol>
+        <p><strong>Pós-condições:</strong> Plano editado aguarda nova aprovação</p>
+
+        <h3>9.5 UC05 - Remover Aprovação de Plano</h3>
+        <p><strong>Ator Principal:</strong> Gestor Operacional</p>
+        <p><strong>Pré-condições:</strong> Utilizador autenticado como GO (go@teste.pt), existe plano aprovado</p>
+        <p><strong>Fluxo Principal:</strong></p>
+        <ol>
+            <li>GO acede à secção "Todos os Agendamentos"</li>
+            <li>Localiza plano aprovado</li>
+            <li>Clica em "Remover Aprovação"</li>
+            <li>Sistema apresenta diálogo solicitando motivo</li>
+            <li>GO insere motivo da remoção</li>
+            <li>GO confirma a remoção</li>
+            <li>Sistema muda status para "Pendente Aprovação"</li>
+            <li>Sistema guarda motivo no campo comentarioGO</li>
+            <li>Sistema remove plano do calendário</li>
+            <li>Sistema apresenta notificação de sucesso</li>
+        </ol>
+        <p><strong>Pós-condições:</strong> Plano volta para estado pendente, requer nova aprovação</p>
+    </div>
+
+    <div class="section">
+        <h2>10. Requisitos Não Funcionais</h2>
+
+        <h3>10.1 Performance</h3>
+        <ul>
+            <li>Tempo de resposta inferior a 2 segundos para operações comuns</li>
+            <li>Carregamento de calendário otimizado para grandes volumes de dados</li>
+            <li>Validações em tempo real sem atrasos perceptíveis</li>
+        </ul>
+
+        <h3>10.2 Usabilidade</h3>
+        <ul>
+            <li>Interface intuitiva e fácil de usar</li>
+            <li>Feedback visual claro para todas as ações</li>
+            <li>Mensagens de erro descritivas e acionáveis</li>
+            <li>Design responsivo para dispositivos móveis e desktop</li>
+        </ul>
+
+        <h3>10.3 Segurança</h3>
+        <ul>
+            <li>Autenticação obrigatória para acesso ao sistema</li>
+            <li>Controlo de acesso baseado em perfis</li>
+            <li>Validação de dados no cliente e servidor</li>
+            <li>Proteção contra injeção de código</li>
+        </ul>
+
+        <h3>10.4 Manutenibilidade</h3>
+        <ul>
+            <li>Código TypeScript com tipagem forte</li>
+            <li>Componentes reutilizáveis e modulares</li>
+            <li>Separação clara de responsabilidades</li>
+            <li>Documentação inline do código</li>
+        </ul>
+
+        <h3>10.5 Escalabilidade</h3>
+        <ul>
+            <li>Arquitetura preparada para integração com backend</li>
+            <li>Estrutura de dados otimizada para crescimento</li>
+            <li>Possibilidade de adicionar novos perfis de utilizador</li>
+            <li>Configuração flexível de dados mestres</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>11. Melhorias Futuras</h2>
+
+        <h3>11.1 Funcionalidades Planeadas</h3>
+        <ul>
+            <li>Integração com base de dados relacional</li>
+            <li>API REST para comunicação backend</li>
+            <li>Notificações por email</li>
+            <li>Exportação de planos para PDF</li>
+            <li>Histórico de alterações de planos</li>
+            <li>Dashboard com gráficos e estatísticas avançadas</li>
+            <li>Filtros e pesquisa avançada de planos</li>
+            <li>Gestão de utilizadores e permissões granulares</li>
+            <li>Integração com sistemas externos (ERP, GIS, etc.)</li>
+            <li>App móvel nativa</li>
+        </ul>
+
+        <h3>11.2 Otimizações Técnicas</h3>
+        <ul>
+            <li>Implementação de cache para dados mestres</li>
+            <li>Lazy loading de componentes pesados</li>
+            <li>Paginação de listas longas</li>
+            <li>Compressão de dados transmitidos</li>
+            <li>Implementação de service workers para offline</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>12. Glossário</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Termo</th>
+                    <th>Definição</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>PK (Ponto Quilométrico)</td>
+                    <td>Referência de localização numa autoestrada, expressa em quilómetros e metros</td>
+                </tr>
+                <tr>
+                    <td>Sublanço</td>
+                    <td>Segmento específico de uma autoestrada delimitado por dois pontos quilométricos</td>
+                </tr>
+                <tr>
+                    <td>GO (Gestor Operacional)</td>
+                    <td>Utilizador responsável por aprovar ou rejeitar planos de trabalho</td>
+                </tr>
+                <tr>
+                    <td>CCO (Coordenador de Operações)</td>
+                    <td>Utilizador com acesso a dashboards e relatórios gerenciais</td>
+                </tr>
+                <tr>
+                    <td>Perfil</td>
+                    <td>Configuração de vias numa autoestrada (ex: 2x2 significa duas vias em cada sentido)</td>
+                </tr>
+                <tr>
+                    <td>Restrições</td>
+                    <td>Limitações ou condições aplicáveis a um trabalho (ex: berma, via de trânsito)</td>
+                </tr>
+                <tr>
+                    <td>Esquema</td>
+                    <td>Configuração de sinalização temporária para o trabalho</td>
+                </tr>
+                <tr>
+                    <td>Sentido</td>
+                    <td>Direção do tráfego (crescente, decrescente ou ambos)</td>
+                </tr>
+                <tr>
+                    <td>Atividade</td>
+                    <td>Tarefa específica dentro de um plano de trabalho, com período e localização definidos</td>
+                </tr>
+                <tr>
+                    <td>Detalhes Diários</td>
+                    <td>Especificações de horário e configuração para cada dia de uma atividade</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>13. Anexos</h2>
+
+        <h3>13.1 Credenciais de Teste</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Perfil</th>
+                    <th>Email</th>
+                    <th>Password</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Prestador de Serviços</td>
+                    <td>prestador@teste.pt</td>
+                    <td>(qualquer)</td>
+                </tr>
+                <tr>
+                    <td>Gestor Operacional</td>
+                    <td>go@teste.pt</td>
+                    <td>(qualquer)</td>
+                </tr>
+                <tr>
+                    <td>Coordenador de Operações</td>
+                    <td>cco@teste.pt</td>
+                    <td>(qualquer)</td>
+                </tr>
+                <tr>
+                    <td>Administrador</td>
+                    <td>admin@teste.pt</td>
+                    <td>(qualquer)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>13.2 Formato de Dados</h3>
+        <h4>Formato de Hora</h4>
+        <p><code>HH:MM</code> (24 horas, ex: 09:30, 14:45, 23:59)</p>
+
+        <h4>Formato de PK</h4>
+        <p><code>X Km + Y m</code> (ex: 10 Km + 500 m, 25 Km + 0 m)</p>
+
+        <h4>Formato de Data</h4>
+        <p><code>dd/MM/yyyy</code> (ex: 22/10/2025)</p>
+
+        <h3>13.3 Códigos de Status</h3>
+        <ul>
+            <li><code>Pendente Aprovação</code> - Plano aguardando aprovação inicial</li>
+            <li><code>Confirmado</code> - Plano aprovado (internamente chamado "Aprovado" na UI)</li>
+            <li><code>Rejeitado</code> - Plano rejeitado pelo GO</li>
+            <li><code>Editado - Pendente Aprovação</code> - Plano aprovado que foi editado e aguarda nova aprovação</li>
+        </ul>
+    </div>
+
+    <div class="info-box" style="margin-top: 40px;">
+        <strong>Fim do Documento</strong><br>
+        Este documento descreve as funcionalidades e especificações do Portal de Agendamento de Planos de Trabalho na sua versão atual. Para questões ou esclarecimentos adicionais, contacte a equipa de desenvolvimento.
+    </div>
+
+</body>
+</html>

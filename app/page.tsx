@@ -20,6 +20,10 @@ import {
   ChevronLeft,
   ChevronRight,
   CalendarIcon,
+  ChevronDown,
+  CheckCircle2,
+  Copy,
+  AlertCircle,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
@@ -40,6 +44,9 @@ import {
   subMonths,
   isBefore,
   startOfDay,
+  parseISO,
+  addDays,
+  endOfWeek, // Added import
 } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import {
@@ -52,9 +59,20 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import AdminDashboard from "@/components/admin-dashboard"
 import { AutoEstradasSelect } from "@/components/auto-estradas-select"
 import type { DateRange as DayPickerDateRange } from "react-day-picker" // Renamed import to avoid conflict
+import { useToast } from "@/components/ui/use-toast" // Import toast
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 // Tipagem para o intervalo de datas
 interface DateRange {
@@ -75,15 +93,18 @@ interface DayData {
   perfil: string
   tipoTrabalhoDay: string
   localIntervencao: string
-  restricoes: string
+  restricoes: string[] // Changed from string to string[] for multiple selections
   esquema: string
   observacoes: string
+  sublanco: string // Calculated sublanco result
 }
 
 // Tipagem para uma atividade
 interface Atividade {
   id: string
-  descricaoAtividade: string
+  descricao: string // Changed from descricaoAtividade to descricao
+  tipoTrabalho: string
+  atividade: string
   periodo: DateRange
   pkInicialKm: string
   pkInicialMeters: string
@@ -92,10 +113,11 @@ interface Atividade {
   sentido: string
   perfil: string
   localIntervencao: string
-  restricoes: string
+  restricoes: string[] // Keep as string for the Atividade interface
   esquema: string
   observacoes: string
   detalhesDiarios: { [dateString: string]: DailyDetail }
+  dayDataMap?: { [dateString: string]: DayData } // Added to store day data when activity is created/edited
 }
 
 // Tipagem para os detalhes diários
@@ -111,20 +133,21 @@ interface DailyDetail {
   outrosLocais: string[]
   responsavelNome: string
   responsavelContacto: string
+  observacoes: string
 }
 
-// Tipagem para um plano submetido
 interface SubmittedPlan {
   id: string
   numero: string
-  tipoTrabalho: string
+  tipoTrabalho?: string // Added tipoTrabalho field
   atividade?: string // Added atividade field
-  autoEstrada?: string // Added autoEstrada field to SubmittedPlan interface
+  autoEstrada?: string // Added autoEstrada to SubmittedPlan interface
   concessao?: string // Added concessao field
   atividades: Atividade[]
-  status: "Pendente Confirmação" | "Confirmado" | "Rejeitado"
+  status: "Pendente Aprovação" | "Confirmado" | "Rejeitado" | "Editado - Pendente Aprovação"
   tipo: "Manutenção Vegetal" | "Beneficiação de Pavimento" | "Manutenção Geral"
   isInISistema: boolean
+  isUrgente?: boolean
   comentarioGO?: string
   kmInicial?: string
   kmFinal?: string
@@ -137,6 +160,7 @@ interface SubmittedPlan {
   entidadeExecutanteContato?: string
   sinalizacaoNome?: string
   sinalizacaoContato?: string
+  originalValues?: Partial<SubmittedPlan> // Store original values before editing
 }
 
 function calculateEaster(year: number): Date {
@@ -188,12 +212,176 @@ function isPortugueseHoliday(date: Date): boolean {
   return holidays.some((holiday) => isSameDay(holiday, date))
 }
 
+const calculateSublanco = async (
+  concessao: string,
+  autoEstrada: string,
+  kmInicial: number,
+  kmFinal: number,
+): Promise<string> => {
+  try {
+    console.log("[v0] calculateSublanco called with:", { concessao, autoEstrada, kmInicial, kmFinal })
+
+    const csvUrl =
+      "https://docs.google.com/spreadsheets/d/1ATKqWm_bTtN398nbfpR0gtHbqYLAc3R5fhOSPqZmNkA/export?format=csv"
+    const response = await fetch(csvUrl)
+
+    if (!response.ok) {
+      console.log("[v0] CSV fetch failed:", response.status)
+      return ""
+    }
+
+    const csvText = await response.text()
+    const lines = csvText.split("\n").filter((line) => line.trim())
+
+    if (lines.length === 0) {
+      console.log("[v0] CSV is empty")
+      return ""
+    }
+
+    // Parse header
+    const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""))
+    console.log("[v0] CSV headers:", headers)
+
+    // Find column indices (case-insensitive with accent normalization)
+    const normalize = (str: string) =>
+      str
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+
+    const concessaoIdx = headers.findIndex((h) => normalize(h) === normalize("concessao"))
+    const autoestradaIdx = headers.findIndex((h) => normalize(h) === normalize("autoestrada"))
+    const sublancoInicioIdx = headers.findIndex((h) => normalize(h) === normalize("sublanco inicio"))
+    const sublancoFimIdx = headers.findIndex((h) => normalize(h) === normalize("sublanco fim"))
+    const pkInicioKmIdx = headers.findIndex((h) => normalize(h) === normalize("pk inicio km"))
+    const pkFimKmIdx = headers.findIndex((h) => normalize(h) === normalize("pk fim km"))
+
+    console.log("[v0] Column indices:", {
+      concessaoIdx,
+      autoestradaIdx,
+      sublancoInicioIdx,
+      sublancoFimIdx,
+      pkInicioKmIdx,
+      pkFimKmIdx,
+    })
+
+    if (
+      concessaoIdx === -1 ||
+      autoestradaIdx === -1 ||
+      sublancoInicioIdx === -1 ||
+      sublancoFimIdx === -1 ||
+      pkInicioKmIdx === -1 ||
+      pkFimKmIdx === -1
+    ) {
+      console.error("[v0] Required columns not found in CSV")
+      return ""
+    }
+
+    // Filter and collect intersecting rows
+    const intersectingRows: Array<{ sublancoInicio: string; sublancoFim: string; pkInicioKm: number }> = []
+
+    for (let i = 1; i < lines.length; i++) {
+      const cells = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""))
+
+      const rowConcessao = cells[concessaoIdx] || ""
+      const rowAutoestrada = cells[autoestradaIdx] || ""
+      const rowPkInicioKm = Number.parseInt(cells[pkInicioKmIdx] || "0")
+      const rowPkFimKm = Number.parseInt(cells[pkFimKmIdx] || "0")
+      const rowSublancoInicio = cells[sublancoInicioIdx] || ""
+      const rowSublancoFim = cells[sublancoFimIdx] || ""
+
+      // Check if row matches filters and intervals intersect
+      if (
+        normalize(rowConcessao) === normalize(concessao) &&
+        normalize(rowAutoestrada) === normalize(autoEstrada) &&
+        rowPkInicioKm <= kmFinal &&
+        rowPkFimKm >= kmInicial
+      ) {
+        intersectingRows.push({
+          sublancoInicio: rowSublancoInicio,
+          sublancoFim: rowSublancoFim,
+          pkInicioKm: rowPkInicioKm,
+        })
+      }
+    }
+
+    console.log("[v0] Intersecting rows found:", intersectingRows.length)
+
+    if (intersectingRows.length === 0) {
+      console.log("[v0] No matching rows found")
+      return ""
+    }
+
+    // Sort by pk inicio km to get first and last
+    intersectingRows.sort((a, b) => a.pkInicioKm - b.pkInicioKm)
+
+    const firstRow = intersectingRows[0]
+    const lastRow = intersectingRows[intersectingRows.length - 1]
+
+    const result = `${firstRow.sublancoInicio} - ${lastRow.sublancoFim}`
+    console.log("[v0] Calculated sublanco:", result)
+
+    return result
+  } catch (error) {
+    console.error("[v0] Error calculating sublanco:", error)
+    return ""
+  }
+}
+
+const TIPO_TRABALHO_TO_ATIVIDADES: Record<string, string[]> = {
+  "Edificios e Portagens": ["Trabalhos em Edifícios e Portagens", "Trabalhos nas Vias de Portagem"],
+  Pavimentos: [
+    "Beneficiação de Pavimento",
+    "Ranhuragens",
+    "Selagem de Fissuras",
+    "Espalhamento de Sal e Fundentes",
+    "Inspecção ao Pavimento",
+    "Rejuvenescimento",
+    "Waterblasting",
+    "Trabalhos em Pavimento",
+  ],
+  Taludes: ["Trabalhos em Talude", "Inspeção de Talude"],
+  Drenagem: [
+    "Limpeza de Orgãos de Drenagem",
+    "Inspeção de Drenagem",
+    "Limpeza de caleiras em ómega",
+    "Trabalhos em Drenagem",
+  ],
+  "Obras Arte": [
+    "Inspeção de Obras de Arte (Viadutos, Túneis, PS, PI e PH)",
+    "Trabalhos em Obras de Arte (Viadutos, Túneis, PS, PI e PH)",
+    "Junta de Dilatação",
+  ],
+  "Vedações e Património": ["Trabalhos em Vedação", "Inspeção de Vedação", "Levantamento Cadastral"],
+  "Sinalização Horizontal": ["Repintura de Sinalização Horizontal", "Inspecção da Sinalização Horizontal"],
+  "Sinalização Vertical": ["Substituição de Sinalização Vertical", "Inspecção da Sinalização Vertical"],
+  Acidente: ["Reparação de Acidente"],
+  Equipamentos: [
+    "Guardas de Segurança",
+    "Atenuadores de Impacto",
+    "New Jerseys",
+    "Pórticos/Semi-Pórticos",
+    "Equipamentos de Telemática",
+    "ETAR / ETAEP",
+    "Túneis rodoviários",
+    "Iluminação",
+    "Telecomunicações",
+    "Barreiras Acústicas",
+    "Condutas",
+    "Linhas de Energia",
+    "Carregadores Elétricos",
+  ],
+  "Revestimento Vegetal": ["Manutenção de Vegetação e Remoção de Resíduos"],
+  Outros: ["Outros Trabalhos"],
+}
+
 export default function ServiceSchedulerApp() {
+  const { toast } = useToast() // Initialize toast hook
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [loginData, setLoginData] = useState({ email: "", password: "" })
   const [user, setUser] = useState({ name: "", email: "" })
   const [userRole, setUserRole] = useState<"prestador" | "go" | "cco" | "admin" | null>(null)
-  const [dateRange, setDateRange] = useState<DayPickerDateRange | undefined>(undefined) // Used DayPickerDateRange here
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined) // Used DayPickerDateRange here
   const [dailyDetails, setDailyDetails] = useState<{ [dateString: string]: DailyDetail }>({})
   const [isUrgente, setIsUrgente] = useState(false) // Changed from isUrgente to setIsUrgente for consistency with other setters
 
@@ -202,11 +390,27 @@ export default function ServiceSchedulerApp() {
   const [vegetalNumero, setVegetalNumero] = useState("")
   const [tipoTrabalho, setTipoTrabalho] = useState("")
   const [atividade, setAtividade] = useState("")
-  const [descricaoAtividade, setDescricaoAtividade] = useState("")
+  const [descricaoAtividade, setDescricaoAtividade] = useState("") // Renamed from descricaoAtividade to match the interface
+
+  const [tipoTrabalhoOptions, setTipoTrabalhoOptions] = useState<string[]>([])
+  const [atividadeOptions, setAtividadeOptions] = useState<string[]>([])
+  const [tipoAtividadeCSVData, setTipoAtividadeCSVData] = useState<Array<{ tipoTrabalho: string; atividade: string }>>(
+    [],
+  )
+  const [tipoEsquemaCSVData, setTipoEsquemaCSVData] = useState<Array<{ tipoTrabalho: string; esquema: string }>>([])
+  const [tipoTrabalhoPerDayOptions, setTipoTrabalhoPerDayOptions] = useState<string[]>([])
+  const [esquemaOptionsByDay, setEsquemaOptionsByDay] = useState<Record<string, string[]>>({})
+
+  const [perfilRestricoesCsvData, setPerfilRestricoesCsvData] = useState<Array<{ perfil: string; restricoes: string }>>(
+    [],
+  )
+  const [perfilOptions, setPerfilOptions] = useState<string[]>([])
+  const [restricoesOptionsByDay, setRestricoesOptionsByDay] = useState<Record<string, string[]>>({})
+
   const [submittedPlans, setSubmittedPlans] = useState<SubmittedPlan[]>([])
   const [selectedPlanForDetails, setSelectedPlanForDetails] = useState<SubmittedPlan | null>(null)
-  const [blockedDates, setBlockedDates] = useState<Set<string>>(new Set())
   const [editingPlanId, setEditingPlanId] = useState<string | null>(null)
+  const [isEditingApprovedPlan, setIsEditingApprovedPlan] = useState(false) // This state is now controlled by handleEditPlan
   const [activeTab, setActiveTab] = useState("vegetal")
   const [autoEstrada, setAutoEstrada] = useState("")
   const [concessao, setConcessao] = useState("") // Added concessao state
@@ -220,7 +424,7 @@ export default function ServiceSchedulerApp() {
   const [trabalhoMovel, setTrabalhoMovel] = useState(false)
   const [perigosTemporarios, setPerigosTemporarios] = useState(false)
   const [localIntervencao, setLocalIntervencao] = useState("")
-  const [restricoes, setRestricoes] = useState("")
+  const [restricoes, setRestricoes] = useState<string[]>([]) // Changed to string[]
   const [esquema, setEsquema] = useState("")
   const [observacoes, setObservacoes] = useState("")
 
@@ -263,6 +467,16 @@ export default function ServiceSchedulerApp() {
     planTitle: "",
   })
 
+  const [rejectionDialog, setRejectionDialog] = useState<{
+    open: boolean
+    planId: string
+    comment: string
+  }>({
+    open: false,
+    planId: "",
+    comment: "",
+  })
+
   const [rejectionComment, setRejectionComment] = useState("")
   const [weeklyPlanCounts, setWeeklyPlanCounts] = useState<{ [weekId: string]: number }>({})
   const [isWeeklyPlansDialogOpen, setIsWeeklyPlansDialogOpen] = useState(false)
@@ -276,21 +490,1276 @@ export default function ServiceSchedulerApp() {
 
   const [concessoes, setConcessoes] = useState<Array<{ value: string; label: string }>>([])
 
+  // State for rejection dialog when viewing plan details
+  const [removalDialog, setRemovalDialog] = useState<{
+    open: boolean
+    planId: string
+    planTitle: string
+  }>({
+    open: false,
+    planId: "",
+    planTitle: "",
+  })
+
+  const [removalReason, setRemovalReason] = useState("")
+
+  // Add state to track PK validation error and disabled options
+  const [pkValidationError, setPkValidationError] = useState<{
+    show: boolean
+    dateStr: string
+    distance: number
+  }>({ show: false, dateStr: "", distance: 0 })
+  const [disabledTipoTrabalhoByDay, setDisabledTipoTrabalhoByDay] = useState<Record<string, string[]>>({})
+
+  const [pkConflictDialog, setPkConflictDialog] = useState<{
+    open: boolean
+    conflictDetails: string
+  }>({
+    open: false,
+    conflictDetails: "",
+  })
+
+  const groupConsecutiveActivities = (activities: Atividade[]) => {
+    if (activities.length === 0) return []
+
+    // Sort activities by start date
+    const sortedActivities = [...activities].sort((a, b) => {
+      const dateA = a.periodo?.from?.getTime() || 0
+      const dateB = b.periodo?.from?.getTime() || 0
+      return dateA - dateB
+    })
+
+    const groups: Array<{ activities: Atividade[]; isGrouped: boolean }> = []
+    let currentGroup: Atividade[] = [sortedActivities[0]]
+
+    const areFieldsIdentical = (act1: Atividade, act2: Atividade) => {
+      const result =
+        act1.pkInicialKm === act2.pkInicialKm &&
+        act1.pkInicialMeters === act2.pkInicialMeters &&
+        act1.pkFinalKm === act2.pkFinalKm &&
+        act1.pkFinalMeters === act2.pkFinalMeters &&
+        act1.perfil === act2.perfil &&
+        act1.restricoes.join(",") === act2.restricoes.join(",") &&
+        act1.sentido === act2.sentido &&
+        act1.tipoTrabalho === act2.tipoTrabalho &&
+        act1.localIntervencao === act2.localIntervencao &&
+        act1.esquema === act2.esquema
+
+      return result
+    }
+
+    const areConsecutiveDays = (date1: Date, date2: Date) => {
+      const diffTime = Math.abs(date2.getTime() - date1.getTime())
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+      const result = diffDays === 1
+
+      return result
+    }
+
+    for (let i = 1; i < sortedActivities.length; i++) {
+      const prevActivity = sortedActivities[i - 1]
+      const currentActivity = sortedActivities[i]
+
+      const prevDate = prevActivity.periodo?.from
+      const currentDate = currentActivity.periodo?.from
+
+      if (
+        prevDate &&
+        currentDate &&
+        areConsecutiveDays(prevDate, currentDate) &&
+        areFieldsIdentical(prevActivity, currentActivity)
+      ) {
+        currentGroup.push(currentActivity)
+      } else {
+        // Push current group
+        groups.push({
+          activities: currentGroup,
+          isGrouped: currentGroup.length > 1,
+        })
+        // Start new group
+        currentGroup = [currentActivity]
+      }
+    }
+
+    // Push the last group
+    groups.push({
+      activities: currentGroup,
+      isGrouped: currentGroup.length > 1,
+    })
+
+    return groups
+  }
+
+  const ChangedValue = ({
+    oldValue,
+    newValue,
+    label,
+    hasChange,
+  }: {
+    oldValue: string
+    newValue: string
+    label: string
+    hasChange?: boolean
+  }) => {
+    const hasChangeCondition = hasChange && oldValue !== newValue && oldValue !== ""
+
+    if (!hasChangeCondition) {
+      return <span>{newValue || "N/A"}</span>
+    }
+
+    return (
+      <span>
+        <span className="line-through text-muted-foreground">{oldValue}</span>
+        <span className="mx-2 text-orange-500">→</span>
+        <span className="text-orange-500 font-semibold">{newValue}</span>
+      </span>
+    )
+  }
+
+  const ActivityWithChanges = ({
+    activity,
+    originalActivity,
+    index,
+  }: {
+    activity: Atividade
+    originalActivity?: Atividade
+    index: number
+  }) => {
+    const hasChanges = !!originalActivity
+
+    const getTimeDisplay = (): {
+      isContinuous: boolean
+      display?: string
+      dayDetails?: Array<{
+        date: string
+        timeSlot: string
+        data: {
+          pkInicial: string
+          pkFinal: string
+          perfil: string
+          restricoes: string
+          sentido: string
+          tipoTrabalho: string
+          localIntervencao: string
+          esquema: string
+        }
+      }>
+    } => {
+      const detalhesDiarios = activity.detalhesDiarios
+      if (!detalhesDiarios || Object.keys(detalhesDiarios).length === 0) {
+        return { isContinuous: true, display: "N/A" }
+      }
+
+      const sortedDates = Object.keys(detalhesDiarios).sort()
+      const dayDetails: Array<{
+        date: string
+        timeSlot: string
+        data: any
+      }> = []
+
+      let isContinuous = true
+      let allFieldsIdentical = true
+      let firstDayData: any = null
+
+      for (let i = 0; i < sortedDates.length; i++) {
+        const date = sortedDates[i]
+        const dayData = detalhesDiarios[date]
+        if (!dayData) continue
+
+        const timeSlot = dayData.timeSlot === "Todo o dia" ? "00:00 - 23:59" : dayData.timeSlot || ""
+
+        // Store day details with full data
+        dayDetails.push({
+          date,
+          timeSlot,
+          data: dayData,
+        })
+
+        if (i === 0) {
+          firstDayData = dayData
+        }
+
+        // Check if all fields are identical to the first day
+        if (firstDayData && i > 0) {
+          if (
+            dayData.kmsInicio !== firstDayData.kmsInicio ||
+            dayData.kmsFim !== firstDayData.kmsFim ||
+            dayData.perfilTipo !== firstDayData.perfilTipo ||
+            dayData.vias.join(",") !== firstDayData.vias.join(",") ||
+            dayData.sentido.join(",") !== firstDayData.sentido.join(",") ||
+            dayData.tipoTrabalho.join(",") !== firstDayData.tipoTrabalho.join(",") ||
+            dayData.outrosLocais.join(",") !== firstDayData.outrosLocais.join(",") ||
+            dayData.esqRef !== firstDayData.esqRef
+          ) {
+            allFieldsIdentical = false
+          }
+        }
+
+        // Check time continuity with next day
+        if (i < sortedDates.length - 1) {
+          const nextDate = sortedDates[i + 1]
+          const nextDayData = detalhesDiarios[nextDate]
+          if (!nextDayData) {
+            isContinuous = false
+            continue
+          }
+
+          const nextTimeSlot = nextDayData.timeSlot === "Todo o dia" ? "00:00 - 23:59" : nextDayData.timeSlot || ""
+          const currentEndTime = timeSlot.split(" - ")[1] || ""
+          const nextStartTime = nextTimeSlot.split(" - ")[0] || ""
+
+          if (currentEndTime !== "23:59" || nextStartTime !== "00:00") {
+            isContinuous = false
+          }
+        }
+      }
+
+      // Only show unified if BOTH continuous AND all fields identical
+      if (isContinuous && allFieldsIdentical) {
+        const firstTimeSlot = dayDetails[0].timeSlot
+        const lastTimeSlot = dayDetails[dayDetails.length - 1].timeSlot
+        const startTime = firstTimeSlot.split(" - ")[0] || "00:00"
+        const endTime = lastTimeSlot.split(" - ")[1] || "23:59"
+
+        return {
+          isContinuous: true,
+          display: `${startTime} - ${endTime}`,
+        }
+      } else {
+        // Return full day details with data
+        return {
+          isContinuous: false,
+          dayDetails: dayDetails.map((d) => ({
+            date: new Date(d.date).toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit" }),
+            timeSlot: d.timeSlot,
+            data: {
+              pkInicial: d.data.kmsInicio || "N/A",
+              pkFinal: d.data.kmsFim || "N/A",
+              perfil: d.data.perfilTipo || "",
+              restricoes: d.data.vias?.join(", ") || "",
+              sentido: d.data.sentido?.join(", ") || "",
+              tipoTrabalho: d.data.tipoTrabalho?.join(", ") || "",
+              localIntervencao: d.data.outrosLocais?.join(", ") || "",
+              esquema: d.data.esqRef || "",
+            },
+          })),
+        }
+      }
+    }
+
+    const timeDisplay = getTimeDisplay()
+
+    return (
+      <Collapsible key={activity.id} defaultOpen={index === 0}>
+        <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border p-4 hover:bg-muted/50">
+          <div className="flex items-center gap-3">
+            <Wrench className="h-5 w-5 text-primary" />
+            <div className="text-left">
+              <div className="font-medium">
+                Atividade {index + 1}: {activity.descricao}
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {activity.periodo.from ? format(activity.periodo.from, "dd/MM/yyyy", { locale: ptBR }) : "N/A"}
+                {activity.periodo.to &&
+                  activity.periodo.to.getTime() !== activity.periodo.from?.getTime() &&
+                  ` - ${format(activity.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`}
+              </div>
+            </div>
+          </div>
+          <ChevronDown className="h-5 w-5 transition-transform duration-200 [[data-state=open]>&]:rotate-180" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="px-4 pb-4 pt-2">
+          {timeDisplay.isContinuous ? (
+            <div className="grid grid-cols-2 gap-4 rounded-lg border p-4">
+              <div className="col-span-2">
+                <span className="font-medium">Data:</span>{" "}
+                <ChangedValue
+                  oldValue={
+                    originalActivity?.periodo?.from
+                      ? format(originalActivity.periodo.from, "dd/MM/yyyy", { locale: ptBR })
+                      : ""
+                  }
+                  newValue={
+                    activity.periodo.from ? format(activity.periodo.from, "dd/MM/yyyy", { locale: ptBR }) : "N/A"
+                  }
+                  hasChange={hasChanges}
+                />
+                {activity.periodo.to && activity.periodo.to.getTime() !== activity.periodo.from?.getTime() && (
+                  <>
+                    {" - "}
+                    <ChangedValue
+                      oldValue={
+                        originalActivity?.periodo?.to
+                          ? format(originalActivity.periodo.to, "dd/MM/yyyy", { locale: ptBR })
+                          : ""
+                      }
+                      newValue={
+                        activity.periodo.to ? format(activity.periodo.to, "dd/MM/yyyy", { locale: ptBR }) : "N/A"
+                      }
+                      hasChange={hasChanges}
+                    />
+                  </>
+                )}
+              </div>
+
+              <div className="col-span-2">
+                <span className="font-medium">Horário:</span> {timeDisplay.display}
+              </div>
+
+              <div>
+                <span className="font-medium">Pk Inicial:</span>{" "}
+                {originalActivity ? (
+                  <ChangedValue
+                    oldValue={`${originalActivity.pkInicialKm} Km + ${originalActivity.pkInicialMeters} m`}
+                    newValue={`${activity.pkInicialKm} Km + ${activity.pkInicialMeters} m`}
+                    hasChange={hasChanges}
+                  />
+                ) : (
+                  `${activity.pkInicialKm} Km + ${activity.pkInicialMeters} m`
+                )}
+              </div>
+
+              <div>
+                <span className="font-medium">Pk Final:</span>{" "}
+                {originalActivity ? (
+                  <ChangedValue
+                    oldValue={`${originalActivity.pkFinalKm} Km + ${originalActivity.pkFinalMeters} m`}
+                    newValue={`${activity.pkFinalKm} Km + ${activity.pkFinalMeters} m`}
+                    hasChange={hasChanges}
+                  />
+                ) : (
+                  `${activity.pkFinalKm} Km + ${activity.pkFinalMeters} m`
+                )}
+              </div>
+
+              <div>
+                <span className="font-medium">Perfil:</span>{" "}
+                {originalActivity ? (
+                  <ChangedValue oldValue={originalActivity.perfil} newValue={activity.perfil} hasChange={hasChanges} />
+                ) : (
+                  activity.perfil
+                )}
+              </div>
+
+              <div>
+                <span className="font-medium">Restrições:</span>{" "}
+                {originalActivity ? (
+                  <ChangedValue
+                    oldValue={originalActivity.restricoes.join(", ")}
+                    newValue={activity.restricoes.join(", ")}
+                    hasChange={hasChanges}
+                  />
+                ) : (
+                  activity.restricoes.join(", ")
+                )}
+              </div>
+
+              <div>
+                <span className="font-medium">Sentido:</span>{" "}
+                {originalActivity ? (
+                  <ChangedValue
+                    oldValue={originalActivity.sentido}
+                    newValue={activity.sentido}
+                    hasChange={hasChanges}
+                  />
+                ) : (
+                  activity.sentido
+                )}
+              </div>
+
+              <div>
+                <span className="font-medium">Tipo de trabalho:</span>{" "}
+                {originalActivity ? (
+                  <ChangedValue
+                    oldValue={originalActivity.tipoTrabalho}
+                    newValue={activity.tipoTrabalho}
+                    hasChange={hasChanges}
+                  />
+                ) : (
+                  activity.tipoTrabalho
+                )}
+              </div>
+
+              <div>
+                <span className="font-medium">Local da intervenção:</span>{" "}
+                {originalActivity ? (
+                  <ChangedValue
+                    oldValue={originalActivity.localIntervencao}
+                    newValue={activity.localIntervencao}
+                    hasChange={hasChanges}
+                  />
+                ) : (
+                  activity.localIntervencao
+                )}
+              </div>
+
+              <div>
+                <span className="font-medium">Esquema:</span>{" "}
+                {originalActivity ? (
+                  <ChangedValue
+                    oldValue={originalActivity.esquema}
+                    newValue={activity.esquema}
+                    hasChange={hasChanges}
+                  />
+                ) : (
+                  activity.esquema
+                )}
+              </div>
+
+              <div className="col-span-2">
+                <span className="font-medium">Observações:</span>{" "}
+                {originalActivity ? (
+                  <ChangedValue
+                    oldValue={originalActivity.observacoes || ""}
+                    newValue={activity.observacoes || ""}
+                    hasChange={hasChanges}
+                  />
+                ) : (
+                  activity.observacoes || "N/A"
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {timeDisplay.dayDetails?.map((day, idx) => (
+                <div key={idx} className="rounded-lg border p-4">
+                  <div className="mb-3 font-medium text-primary">
+                    Dia {day.date}: {day.timeSlot}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <span className="font-medium">Pk Inicial:</span> {day.data.pkInicial}
+                    </div>
+                    <div>
+                      <span className="font-medium">Pk Final:</span> {day.data.pkFinal}
+                    </div>
+                    <div>
+                      <span className="font-medium">Perfil:</span> {day.data.perfil || "N/A"}
+                    </div>
+                    <div>
+                      <span className="font-medium">Restrições:</span> {day.data.restricoes || "N/A"}
+                    </div>
+                    <div>
+                      <span className="font-medium">Sentido:</span> {day.data.sentido || "N/A"}
+                    </div>
+                    <div>
+                      <span className="font-medium">Tipo de trabalho:</span> {day.data.tipoTrabalho || "N/A"}
+                    </div>
+                    <div>
+                      <span className="font-medium">Local da intervenção:</span> {day.data.localIntervencao || "N/A"}
+                    </div>
+                    <div>
+                      <span className="font-medium">Esquema:</span> {day.data.esquema || "N/A"}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div className="rounded-lg border p-4">
+                <div className="font-medium mb-2">Observações gerais:</div>
+                <div>{activity.observacoes || "N/A"}</div>
+              </div>
+            </div>
+          )}
+        </CollapsibleContent>
+      </Collapsible>
+    )
+  }
+
+  const GroupedActivityWithChanges = ({
+    group,
+    originalActivities,
+    startIndex,
+  }: {
+    group: { activities: Atividade[]; isGrouped: boolean }
+    originalActivities?: Atividade[]
+    startIndex: number
+  }) => {
+    const formatPK = (km: string, meters: string) => {
+      return `${km} Km + ${meters} m`
+    }
+
+    if (!group.isGrouped) {
+      // Single activity, use the original component
+      const activity = group.activities[0]
+      const originalActivity = originalActivities?.[startIndex]
+      return <ActivityWithChanges activity={activity} originalActivity={originalActivity} index={startIndex} />
+    }
+
+    // Grouped activities
+    const firstActivity = group.activities[0]
+    const lastActivity = group.activities[group.activities.length - 1]
+    const originalActivity = originalActivities?.[startIndex]
+
+    // Get time range from detalhesDiarios
+    const getTimeRange = () => {
+      // Get the date keys for first and last activities
+      const firstDateKey = firstActivity.periodo?.from ? format(firstActivity.periodo.from, "yyyy-MM-dd") : null
+      const lastDateKey = lastActivity.periodo?.from ? format(lastActivity.periodo.from, "yyyy-MM-dd") : null
+
+      if (!firstDateKey || !lastDateKey) {
+        return "N/A"
+      }
+
+      const firstDayDetails = firstActivity.detalhesDiarios?.[firstDateKey]
+      const lastDayDetails = lastActivity.detalhesDiarios?.[lastDateKey]
+
+      if (!firstDayDetails || !lastDayDetails) {
+        return "N/A"
+      }
+
+      // Extract start time from first day and end time from last day
+      const extractStartTime = (timeSlot: string) => {
+        if (timeSlot === "Todo o dia") return "00:00"
+        const parts = timeSlot.split(" - ")
+        return parts[0] || "00:00"
+      }
+
+      const extractEndTime = (timeSlot: string) => {
+        if (timeSlot === "Todo o dia") return "23:59"
+        const parts = timeSlot.split(" - ")
+        return parts[1] || "23:59"
+      }
+
+      const startTime = extractStartTime(firstDayDetails.timeSlot)
+      const endTime = extractEndTime(lastDayDetails.timeSlot)
+
+      const result = `${startTime} - ${endTime}`
+      return result
+    }
+
+    const timeRange = getTimeRange()
+
+    return (
+      <Collapsible key={firstActivity.id} className="border rounded-lg p-4 bg-blue-50/50">
+        <CollapsibleTrigger className="flex items-center justify-between w-full">
+          <h4 className="font-semibold">
+            Atividade {startIndex + 1}: {firstActivity.descricao}
+            <span className="ml-2 text-sm font-normal text-muted-foreground">
+              (Agrupada - {group.activities.length} dias)
+            </span>
+          </h4>
+          <ChevronDown className="h-4 w-4" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-4 space-y-2">
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="font-medium">Data:</span>{" "}
+              {firstActivity.periodo?.from && lastActivity.periodo?.from
+                ? `${format(firstActivity.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(
+                    lastActivity.periodo.from,
+                    "dd/MM/yyyy",
+                    { locale: ptBR },
+                  )}`
+                : "N/A"}
+            </div>
+            <div>
+              <span className="font-medium">Horário:</span> {timeRange}
+            </div>
+
+            <div>
+              <span className="font-medium">Pk Inicial:</span>{" "}
+              {originalActivity ? (
+                <ChangedValue
+                  oldValue={formatPK(originalActivity.pkInicialKm, originalActivity.pkInicialMeters)}
+                  newValue={formatPK(firstActivity.pkInicialKm, firstActivity.pkInicialMeters)}
+                  label="Pk Inicial"
+                  hasChange={true}
+                />
+              ) : (
+                formatPK(firstActivity.pkInicialKm, firstActivity.pkInicialMeters)
+              )}
+            </div>
+
+            <div>
+              <span className="font-medium">Pk Final:</span>{" "}
+              {originalActivity ? (
+                <ChangedValue
+                  oldValue={formatPK(originalActivity.pkFinalKm, originalActivity.pkFinalMeters)}
+                  newValue={formatPK(firstActivity.pkFinalKm, firstActivity.pkFinalMeters)}
+                  label="Pk Final"
+                  hasChange={true}
+                />
+              ) : (
+                formatPK(firstActivity.pkFinalKm, firstActivity.pkFinalMeters)
+              )}
+            </div>
+
+            <div>
+              <span className="font-medium">Perfil:</span>{" "}
+              {originalActivity ? (
+                <ChangedValue oldValue={originalActivity.perfil} newValue={firstActivity.perfil} hasChange={true} />
+              ) : (
+                firstActivity.perfil
+              )}
+            </div>
+
+            <div>
+              <span className="font-medium">Restrições:</span>{" "}
+              {originalActivity ? (
+                <ChangedValue
+                  oldValue={originalActivity.restricoes.join(", ")}
+                  newValue={firstActivity.restricoes.join(", ")}
+                  hasChange={true}
+                />
+              ) : (
+                firstActivity.restricoes.join(", ")
+              )}
+            </div>
+
+            <div>
+              <span className="font-medium">Sentido:</span>{" "}
+              {originalActivity ? (
+                <ChangedValue oldValue={originalActivity.sentido} newValue={firstActivity.sentido} hasChange={true} />
+              ) : (
+                firstActivity.sentido
+              )}
+            </div>
+
+            <div>
+              <span className="font-medium">Tipo de trabalho:</span>{" "}
+              {originalActivity ? (
+                <ChangedValue
+                  oldValue={originalActivity.tipoTrabalho}
+                  newValue={firstActivity.tipoTrabalho}
+                  hasChange={true}
+                />
+              ) : (
+                firstActivity.tipoTrabalho
+              )}
+            </div>
+
+            <div>
+              <span className="font-medium">Local da intervenção:</span>{" "}
+              {originalActivity ? (
+                <ChangedValue
+                  oldValue={originalActivity.localIntervencao}
+                  newValue={firstActivity.localIntervencao}
+                  hasChange={true}
+                />
+              ) : (
+                firstActivity.localIntervencao
+              )}
+            </div>
+
+            <div>
+              <span className="font-medium">Esquema:</span>{" "}
+              {originalActivity ? (
+                <ChangedValue oldValue={originalActivity.esquema} newValue={firstActivity.esquema} hasChange={true} />
+              ) : (
+                firstActivity.esquema
+              )}
+            </div>
+
+            <div className="col-span-2">
+              <span className="font-medium">Observações:</span>{" "}
+              {originalActivity ? (
+                <ChangedValue
+                  oldValue={originalActivity.observacoes || ""}
+                  newValue={firstActivity.observacoes || ""}
+                  hasChange={true}
+                />
+              ) : (
+                firstActivity.observacoes || "N/A"
+              )}
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    )
+  }
+
+  const DialogContentWithChangedValues = ({ plan }: { plan: SubmittedPlan }) => {
+    const originalValues = plan.originalValues
+
+    const activityGroups = groupConsecutiveActivities(plan.atividades)
+
+    return (
+      <>
+        <DialogHeader>
+          <DialogTitle>Detalhes do Plano: {plan.numero}</DialogTitle> {/* Added plan number to title */}
+          <DialogDescription>
+            Resumo completo do plano de trabalho submetido.
+            {plan.status === "Editado - Pendente Aprovação" && (
+              <span className="block mt-2 text-orange-600 font-semibold">
+                Este plano foi editado. Os valores alterados estão destacados.
+              </span>
+            )}
+          </DialogDescription>
+          {plan.comentarioGO && (
+            <div className="mt-4 p-4 rounded-lg border-2 bg-destructive/10 border-destructive/20">
+              <p className="text-sm font-semibold text-destructive mb-1">Motivo da Rejeição:</p>
+              <p className="text-sm text-destructive/90">{plan.comentarioGO}</p>
+            </div>
+          )}
+        </DialogHeader>
+
+        <div className="space-y-6">
+          {/* Header Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Cabeçalho</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Concessão:</p>
+                <ChangedValue
+                  oldValue={originalValues?.concessao || ""}
+                  newValue={plan.concessao || "N/A"}
+                  label="Concessão"
+                />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Autoestrada:</p>
+                <ChangedValue
+                  oldValue={originalValues?.autoEstrada || ""}
+                  newValue={plan.autoEstrada || "N/A"}
+                  label="Autoestrada"
+                />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Km Inicial:</p>
+                <ChangedValue
+                  oldValue={originalValues?.kmInicial || ""}
+                  newValue={plan.kmInicial || "N/A"}
+                  label="Km Inicial"
+                />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Km Final:</p>
+                <ChangedValue
+                  oldValue={originalValues?.kmFinal || ""}
+                  newValue={plan.kmFinal || "N/A"}
+                  label="Km Final"
+                />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Sublanço:</p>
+                <ChangedValue
+                  oldValue={originalValues?.numero || ""}
+                  newValue={plan.numero || "N/A"}
+                  label="Sublanço"
+                />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Tipo de Trabalho:</p>
+                <ChangedValue
+                  oldValue={originalValues?.tipoTrabalho || ""}
+                  newValue={plan.tipoTrabalho || "N/A"}
+                  label="Tipo de Trabalho"
+                />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Atividade:</p>
+                <ChangedValue
+                  oldValue={originalValues?.atividade || ""}
+                  newValue={plan.atividade || "N/A"}
+                  label="Atividade"
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Contacts Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Contactos</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <p className="text-sm font-semibold mb-1">Fiscalização:</p>
+                <p className="text-sm font-medium text-muted-foreground">Nome:</p>
+                <ChangedValue
+                  oldValue={originalValues?.fiscalizacaoNome || ""}
+                  newValue={plan.fiscalizacaoNome || "N/A"}
+                  label="Nome Fiscalização"
+                />
+                <p className="text-sm font-medium text-muted-foreground mt-2">Contacto:</p>
+                <ChangedValue
+                  oldValue={originalValues?.fiscalizacaoContato || ""}
+                  newValue={plan.fiscalizacaoContato || "N/A"}
+                  label="Contato Fiscalização"
+                />
+              </div>
+              <div>
+                <p className="text-sm font-semibold mb-1">Entidade Executante:</p>
+                <p className="text-sm font-medium text-muted-foreground">Nome:</p>
+                <ChangedValue
+                  oldValue={originalValues?.entidadeExecutanteNome || ""}
+                  newValue={plan.entidadeExecutanteNome || "N/A"}
+                  label="Nome Entidade Executante"
+                />
+                <p className="text-sm font-medium text-muted-foreground mt-2">Contacto:</p>
+                <ChangedValue
+                  oldValue={originalValues?.entidadeExecutanteContato || ""}
+                  newValue={plan.entidadeExecutanteContato || "N/A"}
+                  label="Contato Entidade Executante"
+                />
+              </div>
+              <div>
+                <p className="text-sm font-semibold mb-1">Sinalização:</p>
+                <p className="text-sm font-medium text-muted-foreground">Nome:</p>
+                <ChangedValue
+                  oldValue={originalValues?.sinalizacaoNome || ""}
+                  newValue={plan.sinalizacaoNome || "N/A"}
+                  label="Nome Sinalização"
+                />
+                <p className="text-sm font-medium text-muted-foreground mt-2">Contacto:</p>
+                <ChangedValue
+                  oldValue={originalValues?.sinalizacaoContato || ""}
+                  newValue={plan.sinalizacaoContato || "N/A"}
+                  label="Contato Sinalização"
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Activities Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Atividades ({plan.atividades.length}):</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Display grouped activities instead of individual activities */}
+              {activityGroups.map((group, groupIndex) => {
+                // Calculate the starting index for this group in the original activities array
+                let startIndex = 0
+                for (let i = 0; i < groupIndex; i++) {
+                  startIndex += activityGroups[i].activities.length
+                }
+
+                return (
+                  <GroupedActivityWithChanges
+                    key={group.activities[0].id}
+                    group={group}
+                    originalActivities={originalValues?.atividades}
+                    startIndex={startIndex}
+                  />
+                )
+              })}
+            </CardContent>
+          </Card>
+        </div>
+
+        <DialogFooter className="mt-6">
+          <Button variant="outline" onClick={() => setSelectedPlanForDetails(null)}>
+            Fechar
+          </Button>
+        </DialogFooter>
+      </>
+    )
+  }
+
+  const validatePKDistance = (dateStr: string, dayData: DayData): boolean => {
+    // Only validate for prestador role
+    if (userRole !== "prestador") {
+      return false
+    }
+
+    // Check if all PK fields are filled
+    if (!dayData.pkInicialKm || !dayData.pkInicialMeters || !dayData.pkFinalKm || !dayData.pkFinalMeters) {
+      return false
+    }
+
+    // Calculate PK values in kilometers
+    const pkInicial = Number.parseFloat(dayData.pkInicialKm) + Number.parseFloat(dayData.pkInicialMeters) / 1000
+    const pkFinal = Number.parseFloat(dayData.pkFinalKm) + Number.parseFloat(dayData.pkFinalMeters) / 1000
+
+    // Calculate absolute difference
+    const difference = Math.abs(pkFinal - pkInicial)
+
+    // Check if distance exceeds 3.5 km and tipo de trabalho is "Trabalhos Fixos"
+    if (difference > 3.5 && dayData.tipoTrabalhoDay === "Trabalhos Fixos") {
+      setPkValidationError({
+        show: true,
+        dateStr,
+        distance: difference,
+      })
+      return true // Indicate that there was an error
+    }
+    return false // Indicate no error
+  }
+
+  const validateAllDaysWithTrabalhosFix = () => {
+    // Get all dates that have Trabalhos Fixos selected
+    const datesWithTrabalhosFix = Object.entries(dayDataMap).filter(
+      ([_, dayData]) => dayData.tipoTrabalhoDay === "Trabalhos Fixos",
+    )
+
+    // Validate each day
+    for (const [dateStr, dayData] of datesWithTrabalhosFix) {
+      const hasError = validatePKDistance(dateStr, dayData)
+      if (hasError) {
+        // Stop at the first error to show it to the user
+        break
+      }
+    }
+  }
+
+  const handlePkValidationErrorClose = () => {
+    const { dateStr } = pkValidationError
+
+    // Disable "Trabalhos Fixos" for this day
+    setDisabledTipoTrabalhoByDay((prev) => ({
+      ...prev,
+      [dateStr]: [...(prev[dateStr] || []), "Trabalhos Fixos"],
+    }))
+
+    // Reset tipoTrabalhoDay if it was "Trabalhos Fixos"
+    if (dayDataMap[dateStr]?.tipoTrabalhoDay === "Trabalhos Fixos") {
+      updateDayData(dateStr, "tipoTrabalhoDay", "")
+      // Also clear esquema since it depends on tipo de trabalho
+      updateDayData(dateStr, "esquema", "")
+    }
+
+    // Close the dialog
+    setPkValidationError({ show: false, dateStr: "", distance: 0 })
+  }
+
+  const reEnableTrabalhosFix = (dateStr: string) => {
+    setDisabledTipoTrabalhoByDay((prev) => {
+      const updated = { ...prev }
+      if (updated[dateStr]) {
+        // Remove "Trabalhos Fixos" from the disabled list
+        updated[dateStr] = updated[dateStr].filter((tipo) => tipo !== "Trabalhos Fixos")
+        // If the array is empty, remove the key
+        if (updated[dateStr].length === 0) {
+          delete updated[dateStr]
+        }
+      }
+      return updated
+    })
+  }
+
+  const PERFIL_RESTRICOES_MAP: Record<string, string[]> = {
+    "2 x 3": ["Esquerda", "Central (Via Lentos)"],
+    "2 x 4": ["Berma", "Direita", "Esquerda", "Central Direita", "Central Esquerda"],
+    "1 x 1": ["Berma", "Via única"],
+    "1 x 2": ["Berma", "Direita", "Esquerda"],
+    "Garrafão de Portagem": ["Garrafão de Portagem"],
+  }
+
+  const TIPO_TRABALHO_ESQUEMA_MAP: Record<string, string[]> = {
+    "Trabalhos Fixos": [
+      "F01",
+      "F01a",
+      "F01b",
+      "F01c",
+      "F01d",
+      "F02",
+      "F02a",
+      "F03",
+      "F03b",
+      "F04",
+      "F05",
+      "F05b",
+      "F06",
+      "F07",
+      "F08",
+      "F09",
+      "F10",
+      "F11",
+      "F12",
+      "F13",
+      "F14",
+      "F15",
+      "F16",
+      "F17",
+      "F18",
+      "F19",
+      "F20",
+      "F21",
+      "F22",
+      "F23",
+      "F24",
+      "F25",
+      "F26",
+      "F27",
+      "F28",
+      "F29",
+      "F30",
+      "F31",
+      "F33",
+      "F34",
+      "F34a",
+      "F35",
+      "F35a",
+      "F36",
+      "F37",
+      "F38",
+      "F39",
+      "F40",
+      "F41",
+      "F42",
+      "F43",
+      "F44",
+      "F45",
+      "F46",
+      "F47",
+      "F48",
+      "F49",
+      "F49a",
+      "F50",
+      "F50a",
+      "D1",
+      "D2",
+      "D3",
+      "D4",
+      "D4a",
+      "FSL1",
+      "FSL2",
+      "FSL3",
+      "FSL4",
+      "FSL5",
+      "FSL6",
+    ],
+    "Trabalhos Móveis": [
+      "M01",
+      "M02",
+      "M03",
+      "M04",
+      "M05",
+      "M06",
+      "M07",
+      "M08",
+      "M09",
+      "M10",
+      "M11",
+      "M12",
+      "MR1",
+      "MR2",
+      "MRV13",
+      "MRV14",
+      "MRV15",
+      "MRV16",
+      "MRV17",
+      "MRV18",
+      "MRV19",
+      "MRV20",
+    ],
+    "Perigos Temporários": ["P1A", "P1B", "P22", "P23", "P24"],
+  }
+
+  const validateTime = (time: string): boolean => {
+    if (!time || time.length !== 5) return false
+
+    const [hours, minutes] = time.split(":").map(Number)
+
+    // Validate hours (00-23) and minutes (00-59)
+    if (isNaN(hours) || isNaN(minutes)) return false
+    if (hours < 0 || hours > 23) return false
+    if (minutes < 0 || minutes > 59) return false
+
+    return true
+  }
+
+  const compareTime = (startTime: string, endTime: string): boolean => {
+    // Returns true if endTime is after or equal to startTime
+    if (!startTime || !endTime) return true
+    if (!validateTime(startTime) || !validateTime(endTime)) return true // Consider invalid times as comparable to avoid blocking valid input
+
+    const [startHours, startMinutes] = startTime.split(":").map(Number)
+    const [endHours, endMinutes] = endTime.split(":").map(Number)
+
+    const startTotalMinutes = startHours * 60 + startMinutes
+    const endTotalMinutes = endHours * 60 + endMinutes
+
+    return endTotalMinutes >= startTotalMinutes
+  }
+
+  const formatTimeInput = (value: string): string => {
+    // Remove all non-numeric characters
+    const numbers = value.replace(/\D/g, "")
+
+    // Limit to 4 digits
+    let limitedNumbers = numbers.slice(0, 4)
+
+    // Validate hours (first 2 digits must be 00-23)
+    if (limitedNumbers.length >= 1) {
+      const firstDigit = Number.parseInt(limitedNumbers[0])
+      // First digit of hours must be 0, 1, or 2
+      if (firstDigit > 2) {
+        limitedNumbers = ""
+      }
+    }
+
+    if (limitedNumbers.length >= 2) {
+      const firstDigit = Number.parseInt(limitedNumbers[0])
+      const secondDigit = Number.parseInt(limitedNumbers[1])
+      // If first digit is 2, second digit must be 0-3 (for 20-23)
+      if (firstDigit === 2 && secondDigit > 3) {
+        limitedNumbers = limitedNumbers.slice(0, 1)
+      }
+    }
+
+    // Validate minutes (digits 3-4 must be 00-59)
+    if (limitedNumbers.length >= 3) {
+      const firstMinuteDigit = Number.parseInt(limitedNumbers[2])
+      // First digit of minutes must be 0-5
+      if (firstMinuteDigit > 5) {
+        limitedNumbers = limitedNumbers.slice(0, 2)
+      }
+    }
+
+    // Add colon after first 2 digits
+    if (limitedNumbers.length >= 3) {
+      return `${limitedNumbers.slice(0, 2)}:${limitedNumbers.slice(2)}`
+    }
+
+    return limitedNumbers
+  }
+
+  const handleTimeInput = (dateStr: string, field: "horaInicio" | "horaFim", value: string) => {
+    const formatted = formatTimeInput(value)
+
+    // Only validate if the input is complete (5 characters: HH:MM)
+    if (formatted.length === 5) {
+      if (!validateTime(formatted)) {
+        // Optionally, you could display an error to the user here
+        return // Don't update if time is invalid
+      }
+
+      // Get current day data to check the other time field
+      const currentDayData = dayDataMap[dateStr]
+
+      if (currentDayData) {
+        if (field === "horaFim") {
+          // Check if end time is not before start time
+          if (currentDayData.horaInicio && !compareTime(currentDayData.horaInicio, formatted)) {
+            alert("A Hora de Fim não pode ser anterior à Hora de Início")
+            return
+          }
+        } else if (field === "horaInicio") {
+          // Check if start time is not after end time
+          if (currentDayData.horaFim && !compareTime(formatted, currentDayData.horaFim)) {
+            alert("A Hora de Início não pode ser posterior à Hora de Fim")
+            return
+          }
+        }
+      }
+    }
+
+    updateDayData(dateStr, field, formatted)
+  }
+
+  const updateSublancoForDay = async (dateStr: string) => {
+    const dayData = dayDataMap[dateStr] // Accessing from the state object
+
+    if (!dayData || !concessao || !autoEstrada) {
+      // Clear sublanco if essential data is missing
+      updateDayData(dateStr, "sublanco", "")
+      return
+    }
+
+    const kmInicial = Number.parseInt(dayData.pkInicialKm || "0")
+    const kmFinal = Number.parseInt(dayData.pkFinalKm || "0")
+
+    if (kmInicial === 0 && kmFinal === 0) {
+      // Clear sublanco if PKs are reset
+      updateDayData(dateStr, "sublanco", "")
+      return
+    }
+
+    const sublanco = await calculateSublanco(concessao, autoEstrada, kmInicial, kmFinal)
+    updateDayData(dateStr, "sublanco", sublanco)
+
+    if (sublanco) {
+      setVegetalNumero(sublanco)
+    }
+  }
+
+  useEffect(() => {
+    const calculateFormSublanco = async () => {
+      // Only calculate if all required fields are filled
+      if (!concessao || !autoEstrada || !kmInicial || !kmFinal) {
+        return
+      }
+
+      const kmInicialNum = Number.parseInt(kmInicial)
+      const kmFinalNum = Number.parseInt(kmFinal)
+
+      if (isNaN(kmInicialNum) || isNaN(kmFinalNum)) {
+        return
+      }
+
+      const result = await calculateSublanco(concessao, autoEstrada, kmInicialNum, kmFinalNum)
+
+      if (result) {
+        setVegetalNumero(result)
+      } else {
+        setVegetalNumero("")
+      }
+    }
+
+    calculateFormSublanco()
+  }, [concessao, autoEstrada, kmInicial, kmFinal])
+
   useEffect(() => {
     const loadConcessoes = async () => {
       try {
-        const response = await fetch("/data/concessoes.json")
+        const csvUrl =
+          "https://docs.google.com/spreadsheets/d/1ATKqWm_bTtN398nbfpR0gtHbqYLAc3R5fhOSPqZmNkA/export?format=csv"
+        const response = await fetch(csvUrl)
         if (!response.ok) {
-          throw new Error("Failed to load concessoes")
+          throw new Error("Failed to load CSV from Google Sheets")
         }
-        const data: string[] = await response.json()
-        const formattedData = data.map((item) => ({
+        const csvText = await response.text()
+
+        // Parse CSV
+        const lines = csvText.split("\n").filter((line) => line.trim())
+        if (lines.length === 0) {
+          throw new Error("CSV is empty")
+        }
+
+        // Get headers (first line)
+        const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""))
+
+        // Find the "concessão" column (case-insensitive)
+        const concessaoIndex = headers.findIndex(
+          (h) =>
+            h
+              .toLowerCase()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "") === "concessao".normalize("NFD").replace(/[\u0300-\u036f]/g, ""),
+        )
+
+        if (concessaoIndex === -1) {
+          console.error("Available columns:", headers)
+          throw new Error("Column 'concessão' not found in CSV")
+        }
+
+        // Extract values from the concessão column
+        const concessaoValues = new Set<string>()
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(",").map((v) => v.trim().replace(/^"|"$/g, ""))
+          const concessaoValue = values[concessaoIndex]
+          if (concessaoValue && concessaoValue.trim()) {
+            concessaoValues.add(concessaoValue.trim())
+          }
+        }
+
+        // Format as array of objects with value and label
+        const formattedData = Array.from(concessaoValues).map((item) => ({
           value: item,
           label: item,
         }))
+
         setConcessoes(formattedData)
       } catch (error) {
         console.error("Erro ao carregar concessões:", error)
+        // Fallback to local file if Google Sheets fails
+        try {
+          const response = await fetch("/data/concessoes.json")
+          if (response.ok) {
+            const data: string[] = await response.json()
+            const formattedData = data.map((item) => ({
+              value: item,
+              label: item,
+            }))
+            setConcessoes(formattedData)
+          }
+        } catch (fallbackError) {
+          console.error("Fallback also failed:", fallbackError)
+        }
       }
     }
 
@@ -298,31 +1767,263 @@ export default function ServiceSchedulerApp() {
   }, [])
 
   useEffect(() => {
-    const newBlockedDates = new Set<string>()
+    const fetchPerfilRestricoesCsv = async () => {
+      try {
+        const response = await fetch(
+          "https://docs.google.com/spreadsheets/d/1YjO_rNCY9XAPaO7YkMuumlosb-DmiLsbE6jie8JTfkw/export?format=csv",
+        )
+        const csvText = await response.text()
+
+        // Parse CSV
+        const lines = csvText.split("\n").filter((line) => line.trim())
+        if (lines.length === 0) {
+          return
+        }
+
+        const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""))
+
+        // Find column indices (case-insensitive with accent normalization)
+        const normalizeString = (str: string) =>
+          str
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+
+        const perfilIndex = headers.findIndex((h) => normalizeString(h) === normalizeString("Perfil"))
+        const restricoesIndex = headers.findIndex((h) => normalizeString(h) === normalizeString("Restrições"))
+
+        if (perfilIndex === -1 || restricoesIndex === -1) {
+          console.error("[v0] Required columns not found in perfil-restricoes CSV")
+          return
+        }
+
+        // Parse data rows
+        const data: Array<{ perfil: string; restricoes: string }> = []
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(",").map((v) => v.trim().replace(/^"|"$/g, ""))
+          const perfil = values[perfilIndex]
+          const restricoes = values[restricoesIndex]
+
+          if (perfil && restricoes) {
+            data.push({ perfil, restricoes })
+          }
+        }
+
+        setPerfilRestricoesCsvData(data)
+
+        const uniquePerfis = Array.from(new Set(data.map((row) => row.perfil))).sort()
+        setPerfilOptions(uniquePerfis)
+      } catch (error) {
+        console.error("[v0] Error fetching perfil-restricoes CSV:", error)
+      }
+    }
+
+    fetchPerfilRestricoesCsv()
+  }, [])
+
+  useEffect(() => {
+    const fetchTipoAtividadeData = async () => {
+      try {
+        const response = await fetch(
+          "https://docs.google.com/spreadsheets/d/1K2UXfOD3pcJ-8LTjKuEzgsPUn0H5WDOJXVT93_iWrUg/export?format=csv",
+        )
+        const csvText = await response.text()
+
+        // Parse CSV
+        const lines = csvText.split("\n").filter((line) => line.trim())
+        if (lines.length === 0) return
+
+        const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""))
+
+        // Find column indices (case-insensitive)
+        const tipoTrabalhoIndex = headers.findIndex(
+          (h) =>
+            h
+              .toLowerCase()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "") === "tipo de trabalho".normalize("NFD").replace(/[\u0300-\u036f]/g, ""),
+        )
+        const atividadeIndex = headers.findIndex(
+          (h) =>
+            h
+              .toLowerCase()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "") === "atividade".normalize("NFD").replace(/[\u0300-\u036f]/g, ""),
+        )
+
+        if (tipoTrabalhoIndex === -1 || atividadeIndex === -1) {
+          console.error("[v0] Required columns not found in CSV")
+          return
+        }
+
+        // Parse data rows
+        const data: Array<{ tipoTrabalho: string; atividade: string }> = []
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(",").map((v) => v.trim().replace(/^"|"$/g, ""))
+          const tipoTrabalho = values[tipoTrabalhoIndex]
+          const atividade = values[atividadeIndex]
+
+          if (tipoTrabalho && atividade) {
+            data.push({ tipoTrabalho, atividade })
+          }
+        }
+
+        setTipoAtividadeCSVData(data)
+      } catch (error) {
+        console.error("[v0] Error fetching tipo/atividade CSV:", error)
+      }
+    }
+
+    fetchTipoAtividadeData()
+  }, [])
+
+  useEffect(() => {
+    const tipoTrabalhoValues = [
+      "Edificios e Portagens",
+      "Pavimentos",
+      "Taludes",
+      "Drenagem",
+      "Obras Arte",
+      "Vedações e Património",
+      "Sinalização Horizontal",
+      "Sinalização Vertical",
+      "Acidente",
+      "Equipamentos",
+      "Revestimento Vegetal",
+      "Outros",
+    ]
+    setTipoTrabalhoOptions(tipoTrabalhoValues)
+  }, [])
+
+  useEffect(() => {
+    const tipoTrabalhoValues = ["Perigos Temporários", "Trabalhos Fixos", "Trabalhos Móveis"]
+    setTipoTrabalhoPerDayOptions(tipoTrabalhoValues)
+  }, [])
+
+  useEffect(() => {
+    const fetchTipoEsquemaData = async () => {
+      try {
+        const response = await fetch(
+          "https://docs.google.com/spreadsheets/d/1qDI5zszQV3aRKbCPD-TjOaqFgnGxlzoETmPAKEhJN1c/export?format=csv",
+        )
+        const csvText = await response.text()
+
+        // Parse CSV
+        const lines = csvText.split("\n").filter((line) => line.trim())
+        if (lines.length === 0) {
+          return
+        }
+
+        const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""))
+
+        const normalizeString = (str: string) =>
+          str
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+
+        const tipoTrabalhoIndex = headers.findIndex((h) => normalizeString(h) === normalizeString("Tipo de Esquema"))
+        const esquemaIndex = headers.findIndex((h) => normalizeString(h) === normalizeString("Esquemas"))
+
+        if (tipoTrabalhoIndex === -1 || esquemaIndex === -1) {
+          console.error("[v0] Required columns not found in tipo trabalho and esquema CSV")
+          console.error("[v0] Looking for: 'Tipo de Esquema' and 'Esquemas'")
+          console.error("[v0] Found headers:", headers)
+          return
+        }
+
+        // Parse data rows
+        const data: Array<{ tipoTrabalho: string; esquema: string }> = []
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(",").map((v) => v.trim().replace(/^"|"$/g, ""))
+          const tipoTrabalho = values[tipoTrabalhoIndex]
+          const esquema = values[esquemaIndex]
+
+          if (tipoTrabalho && esquema) {
+            data.push({ tipoTrabalho, esquema })
+          }
+        }
+
+        setTipoEsquemaCSVData(data)
+      } catch (error) {
+        console.error("[v0] Error fetching tipo trabalho and esquema CSV:", error)
+      }
+    }
+
+    fetchTipoEsquemaData()
+  }, [])
+
+  useEffect(() => {
+    if (!tipoTrabalho) {
+      setAtividadeOptions([])
+      return
+    }
+
+    // Get atividades from hardcoded mapping
+    const atividades = TIPO_TRABALHO_TO_ATIVIDADES[tipoTrabalho] || []
+    setAtividadeOptions(atividades)
+
+    if (!editingAtividadeId && !editingPlanId) {
+      setAtividade("")
+    }
+  }, [tipoTrabalho, editingAtividadeId, editingPlanId])
+
+  useEffect(() => {
+    const newDailyDetails: { [dateString: string]: DailyDetail } = {}
+
+    Object.entries(dayDataMap).forEach(([dateStr, dayData]) => {
+      const timeSlot = dayData.todoDia ? "00:00 - 23:59" : `${dayData.horaInicio} - ${dayData.horaFim}` // Ensure it's always HH:MM - HH:MM or "Todo o dia"
+
+      const kmsInicio =
+        dayData.pkInicialKm && dayData.pkInicialMeters ? `${dayData.pkInicialKm} Km + ${dayData.pkInicialMeters} m` : ""
+
+      const kmsFim =
+        dayData.pkFinalKm && dayData.pkFinalMeters ? `${dayData.pkFinalKm} Km + ${dayData.pkFinalMeters} m` : ""
+
+      newDailyDetails[dateStr] = {
+        timeSlot: timeSlot,
+        perfilTipo: dayData.perfil,
+        tipoTrabalho: dayData.tipoTrabalhoDay ? [dayData.tipoTrabalhoDay] : [],
+        kmsInicio: kmsInicio,
+        kmsFim: kmsFim,
+        sentido: dayData.sentido ? [dayData.sentido] : [],
+        vias: dayData.restricoes || [], // 'vias' maps to 'restricoes'
+        esqRef: dayData.esquema,
+        outrosLocais: dayData.localIntervencao ? [dayData.localIntervencao] : [],
+        responsavelNome: "", // Not used in current form
+        responsavelContacto: "", // Not used in current form
+        observacoes: dayData.observacoes || "",
+      }
+    })
+
+    setDailyDetails(newDailyDetails)
+  }, [dayDataMap])
+
+  useEffect(() => {
     const newWeeklyCounts: { [weekId: string]: number } = {}
 
     submittedPlans.forEach((plan) => {
-      if (plan.status === "Confirmado") {
-        plan.atividades.forEach((atividade) => {
-          if (atividade.periodo.from && atividade.periodo.to) {
-            const dates = getDatesInRange(atividade.periodo.from, atividade.periodo.to)
-            dates.forEach((date) => newBlockedDates.add(format(date, "yyyy-MM-dd")))
-          }
-        })
-      }
+      // Show approved plans, or edited/rejected plans that are already in iSistema
+      const shouldShowInCCO =
+        plan.status === "Confirmado" ||
+        ((plan.status === "Editado - Pendente Aprovação" || plan.status === "Rejeitado") && plan.isInISistema)
 
-      if (plan.status === "Confirmado" && plan.atividades.length > 0 && plan.atividades[0].periodo.from) {
+      if (shouldShowInCCO && plan.atividades.length > 0 && plan.atividades[0].periodo.from) {
         const weekNum = getWeek(plan.atividades[0].periodo.from, { locale: ptBR, weekStartsOn: 1 })
         const year = getYear(plan.atividades[0].periodo.from)
         const weekId = `${year}-Semana-${weekNum}`
         newWeeklyCounts[weekId] = (newWeeklyCounts[weekId] || 0) + 1
       }
     })
-    setBlockedDates(newBlockedDates)
     setWeeklyPlanCounts(newWeeklyCounts)
   }, [submittedPlans])
 
   useEffect(() => {
+    // Skip regeneration if we're in edit mode - the edit handler will set dayDataMap
+    if (editingAtividadeId) {
+      return
+    }
+
     const newDayDataMap = generateDaysData(dateRange)
     // Preserve existing data for dates that are still in the new range
     Object.keys(dayDataMap).forEach((dateStr) => {
@@ -330,6 +2031,7 @@ export default function ServiceSchedulerApp() {
         const existingData = dayDataMap[dateStr]
         const dayIndex = newDayDataMap.findIndex((day) => format(day.date, "yyyy-MM-dd") === dateStr)
         if (dayIndex !== -1) {
+          // Ensure we don't overwrite newly generated default values if they exist
           newDayDataMap[dayIndex] = { ...newDayDataMap[dayIndex], ...existingData }
         }
       }
@@ -345,7 +2047,7 @@ export default function ServiceSchedulerApp() {
       setIsLoggedIn(true)
       setActiveTab("vegetal")
     } else if (loginData.email === "go@teste.pt") {
-      setUser({ name: "Gestor Operacional", email: loginData.email })
+      setUser({ name: "Gestor de Operações", email: loginData.email })
       setUserRole("go")
       setIsLoggedIn(true)
       setActiveTab("aprovacao")
@@ -353,7 +2055,7 @@ export default function ServiceSchedulerApp() {
       setUser({ name: "Coordenador de Operações", email: loginData.email })
       setUserRole("cco")
       setIsLoggedIn(true)
-      setActiveTab("dashboard-cco")
+      setActiveTab("dashboard-cco") // Changed active tab for CCO
     } else if (loginData.email === "admin@teste.pt") {
       setUser({ name: "Administrador", email: loginData.email })
       setUserRole("admin")
@@ -380,7 +2082,7 @@ export default function ServiceSchedulerApp() {
     setConcessao("") // Reset concessao state
     setKmInicial("")
     setKmFinal("")
-    setIsUrgente(false)
+    setIsUrgente(false) // Reset urgent status on logout
     setPkInicial("") // Resetting old states if they exist
     setPkFinal("") // Resetting old states if they exist
     setPkInicialKm("") // Reset new states
@@ -393,17 +2095,25 @@ export default function ServiceSchedulerApp() {
     setTrabalhoMovel(false)
     setPerigosTemporarios(false)
     setLocalIntervencao("")
-    setRestricoes("")
+    setRestricoes([]) // Reset to empty array
     setEsquema("")
     setObservacoes("")
     setAtividades([])
     setEditingAtividadeId(null)
+    setIsEditingApprovedPlan(false)
     setFiscalizacaoNome("")
     setFiscalizacaoContato("")
     setEntidadeExecutanteNome("")
     setEntidadeExecutanteContato("")
     setSinalizacaoNome("")
     setSinalizacaoContato("")
+    setTipoAtividadeCSVData([])
+    setPerfilRestricoesCsvData([])
+    setRestricoesOptionsByDay({})
+    setTipoEsquemaCSVData([])
+    setEsquemaOptionsByDay({})
+    setPkValidationError({ show: false, dateStr: "", distance: 0 })
+    setDisabledTipoTrabalhoByDay({})
   }
 
   const getDatesInRange = (startDate?: Date, endDate?: Date): Date[] => {
@@ -439,9 +2149,10 @@ export default function ServiceSchedulerApp() {
         perfil: "",
         tipoTrabalhoDay: "",
         localIntervencao: "",
-        restricoes: "",
+        restricoes: [], // Initialize as an empty array
         esquema: "",
         observacoes: "",
+        sublanco: "", // Initialize sublanco
       })
       currentDate.setDate(currentDate.getDate() + 1)
     }
@@ -468,6 +2179,7 @@ export default function ServiceSchedulerApp() {
         outrosLocais: [],
         responsavelNome: "",
         responsavelContacto: "",
+        observacoes: "", // Initialize observacoes
       }
 
       if (field === "tipoTrabalho" || field === "sentido" || field === "vias" || field === "outrosLocais") {
@@ -509,24 +2221,149 @@ export default function ServiceSchedulerApp() {
     }))
   }
 
-  const formatTimeInput = (value: string): string => {
-    // Remove all non-numeric characters
-    const numbers = value.replace(/\D/g, "")
+  const handleDayClick = (day: Date) => {
+    const clickedDay = startOfDay(day)
 
-    // Limit to 4 digits
-    const limitedNumbers = numbers.slice(0, 4)
-
-    // Add colon after first 2 digits
-    if (limitedNumbers.length >= 3) {
-      return `${limitedNumbers.slice(0, 2)}:${limitedNumbers.slice(2)}`
+    // If no range is selected, start a new single-day selection
+    if (!dateRange || !dateRange.from) {
+      setDateRange({ from: clickedDay, to: clickedDay })
+      return
     }
 
-    return limitedNumbers
+    // If a single day is selected (from === to)
+    if (dateRange.from && dateRange.to && isSameDay(dateRange.from, dateRange.to)) {
+      const selectedDay = startOfDay(dateRange.from)
+
+      // If clicking the same day, deselect
+      if (isSameDay(clickedDay, selectedDay)) {
+        setDateRange(undefined)
+        return
+      }
+
+      // If clicking a different day, create a range or new single-day selection
+      if (clickedDay < selectedDay) {
+        setDateRange({ from: clickedDay, to: selectedDay })
+      } else {
+        setDateRange({ from: selectedDay, to: clickedDay })
+      }
+      return
+    }
+
+    // If a range is already selected, start a new single-day selection
+    if (dateRange.from && dateRange.to) {
+      setDateRange({ from: clickedDay, to: clickedDay })
+      return
+    }
+
+    // If only 'from' is selected (shouldn't happen with new logic, but keeping for safety)
+    if (dateRange.from && !dateRange.to) {
+      const from = startOfDay(dateRange.from)
+
+      if (isSameDay(clickedDay, from)) {
+        setDateRange(undefined)
+        return
+      }
+
+      if (clickedDay < from) {
+        setDateRange({ from: clickedDay, to: from })
+      } else {
+        setDateRange({ from, to: clickedDay })
+      }
+      return
+    }
+
+    // Fallback: start new single-day selection
+    setDateRange({ from: clickedDay, to: clickedDay })
   }
 
-  const handleTimeInput = (dateStr: string, field: "horaInicio" | "horaFim", value: string) => {
-    const formatted = formatTimeInput(value)
-    updateDayData(dateStr, field, formatted)
+  const updateRestricoesOptionsForDay = (dateStr: string, selectedPerfil: string, preserveValue = false) => {
+    if (!selectedPerfil) {
+      setRestricoesOptionsByDay((prev) => ({ ...prev, [dateStr]: [] }))
+      // Clear the selected restrictions if the profile is cleared
+      if (!preserveValue) {
+        updateDayData(dateStr, "restricoes", [])
+      }
+      return
+    }
+
+    // Get restricoes options from hardcoded mapping
+    const restricoesOptions = PERFIL_RESTRICOES_MAP[selectedPerfil] || []
+    setRestricoesOptionsByDay((prev) => ({ ...prev, [dateStr]: restricoesOptions }))
+
+    // Clear selected restrictions when perfil changes (unless preserveValue is true during editing)
+    if (!preserveValue) {
+      updateDayData(dateStr, "restricoes", [])
+    }
+  }
+
+  const updateEsquemaOptionsForDay = (dateStr: string, selectedTipoTrabalho: string, preserveValue = false) => {
+    if (!selectedTipoTrabalho) {
+      setEsquemaOptionsByDay((prev) => ({ ...prev, [dateStr]: [] }))
+      // Clear the selected esquema if tipo de trabalho is cleared
+      if (!preserveValue) {
+        updateDayData(dateStr, "esquema", "")
+      }
+      return
+    }
+
+    // Get esquema options from hardcoded mapping
+    const esquemaOptions = TIPO_TRABALHO_ESQUEMA_MAP[selectedTipoTrabalho] || []
+    setEsquemaOptionsByDay((prev) => ({ ...prev, [dateStr]: esquemaOptions }))
+
+    // Clear the selected esquema when tipo de trabalho changes
+    if (!preserveValue) {
+      updateDayData(dateStr, "esquema", "")
+    }
+  }
+
+  const copyToNextDay = (currentDateStr: string) => {
+    const currentDate = parseISO(currentDateStr)
+    const nextDate = addDays(currentDate, 1)
+    const nextDateStr = format(nextDate, "yyyy-MM-dd")
+
+    const currentDayData = dayDataMap[currentDateStr]
+
+    if (!currentDayData) {
+      return
+    }
+
+    // Copy all relevant fields to the next day
+    const copiedData: Partial<DayData> = {
+      horaInicio: currentDayData.horaInicio,
+      horaFim: currentDayData.horaFim,
+      todoDia: currentDayData.todoDia,
+      pkInicialKm: currentDayData.pkInicialKm,
+      pkInicialMeters: currentDayData.pkInicialMeters,
+      pkFinalKm: currentDayData.pkFinalKm,
+      pkFinalMeters: currentDayData.pkFinalMeters,
+      perfil: currentDayData.perfil,
+      restricoes: currentDayData.restricoes,
+      sentido: currentDayData.sentido,
+      tipoTrabalhoDay: currentDayData.tipoTrabalhoDay,
+      localIntervencao: currentDayData.localIntervencao,
+      esquema: currentDayData.esquema,
+      observacoes: currentDayData.observacoes,
+    }
+
+    // Update the next day with copied data
+    setDayDataMap((prev) => ({
+      ...prev,
+      [nextDateStr]: {
+        ...prev[nextDateStr], // Ensure existing data for the next day is preserved if any
+        ...copiedData,
+      },
+    }))
+
+    // Update dependent options for the next day
+    if (copiedData.perfil) {
+      updateRestricoesOptionsForDay(nextDateStr, copiedData.perfil, true)
+    }
+    if (copiedData.tipoTrabalhoDay) {
+      updateEsquemaOptionsForDay(nextDateStr, copiedData.tipoTrabalhoDay, true)
+    }
+
+    // Trigger sublanco calculation for the next day
+    setTimeout(() => updateSublancoForDay(nextDateStr), 100)
   }
 
   const resetAtividadeForm = () => {
@@ -541,10 +2378,203 @@ export default function ServiceSchedulerApp() {
     setSentido("")
     setPerfil("")
     setLocalIntervencao("")
-    setRestricoes("")
+    setRestricoes([]) // Reset to empty array
     setEsquema("")
     setObservacoes("")
     setEditingAtividadeId(null)
+    // Clear daily details specific to this activity
+    setRestricoesOptionsByDay({})
+    // Reset esquemas for the cleared activity
+    setEsquemaOptionsByDay({})
+    // Reset disabled tipo trabalho options for the cleared activity's days
+    setDisabledTipoTrabalhoByDay({})
+  }
+
+  const handleAdicionarAtividade = () => {
+    // Validate required fields
+    if (!descricaoAtividade.trim()) {
+      setNotificationDialog({
+        open: true,
+        title: "Erro",
+        description: "Por favor, preencha a descrição da atividade.",
+      })
+      return
+    }
+
+    if (!dateRange?.from || !dateRange?.to) {
+      setNotificationDialog({
+        open: true,
+        title: "Erro",
+        description: "Por favor, selecione um período para a atividade.",
+      })
+      return
+    }
+
+    if (userRole === "prestador") {
+      // Check for PK conflicts with approved plans, but exclude the current plan if editing
+      const approvedPlans = submittedPlans.filter((plan) => {
+        // Exclude the current plan being edited from the conflict check
+        if (editingPlanId && plan.id === editingPlanId) {
+          return false
+        }
+        return plan.status === "Confirmado"
+      })
+
+      // Check each day in the date range
+      const currentDate = dateRange.from ? new Date(dateRange.from) : null
+      const endDate = dateRange.to ? new Date(dateRange.to) : null
+
+      if (!currentDate || !endDate) {
+        setNotificationDialog({
+          open: true,
+          title: "Erro Interno",
+          description: "Não foi possível verificar conflitos de PK devido a um intervalo de datas inválido.",
+        })
+        return
+      }
+
+      let conflictDetected = false
+
+      while (currentDate <= endDate && !conflictDetected) {
+        const dateStr = currentDate.toISOString().split("T")[0]
+        const dayData = dayDataMap[dateStr]
+
+        if (dayData) {
+          const pkInicialKm = Number.parseFloat(dayData.pkInicialKm || "0")
+          const pkInicialMeters = Number.parseFloat(dayData.pkInicialMeters || "0")
+          const pkFinalKm = Number.parseFloat(dayData.pkFinalKm || "0")
+          const pkFinalMeters = Number.parseFloat(dayData.pkFinalMeters || "0")
+
+          if (
+            (pkInicialKm || pkInicialMeters || pkFinalKm || pkFinalMeters) &&
+            (pkInicialKm + pkInicialMeters / 1000 > 0 || pkFinalKm + pkFinalMeters / 1000 > 0)
+          ) {
+            const pkInicial = pkInicialKm + pkInicialMeters / 1000
+            const pkFinal = pkFinalKm + pkFinalMeters / 1000
+
+            const minPK = Math.min(pkInicial, pkFinal)
+            const maxPK = Math.max(pkInicial, pkFinal)
+
+            for (const approvedPlan of approvedPlans) {
+              if (approvedPlan.autoEstrada !== autoEstrada) {
+                continue
+              }
+
+              for (const activity of approvedPlan.atividades) {
+                const activityStart = activity.periodo.from ? new Date(activity.periodo.from) : null
+                const activityEnd = activity.periodo.to ? new Date(activity.periodo.to) : null
+                const checkDate = new Date(dateStr)
+
+                if (activityStart && activityEnd && checkDate >= activityStart && checkDate <= activityEnd) {
+                  const activityDayData = activity.dayDataMap?.[dateStr]
+
+                  if (activityDayData) {
+                    const approvedPkInicialKm = Number.parseFloat(activityDayData.pkInicialKm || "0")
+                    const approvedPkInicialMeters = Number.parseFloat(activityDayData.pkInicialMeters || "0")
+                    const approvedPkFinalKm = Number.parseFloat(activityDayData.pkFinalKm || "0")
+                    const approvedPkFinalMeters = Number.parseFloat(activityDayData.pkFinalMeters || "0")
+
+                    const approvedPkInicial = approvedPkInicialKm + approvedPkInicialMeters / 1000
+                    const approvedPkFinal = approvedPkFinalKm + approvedPkFinalMeters / 1000
+
+                    const approvedMinPK = Math.min(approvedPkInicial, approvedPkFinal)
+                    const approvedMaxPK = Math.max(approvedPkInicial, approvedPkFinal)
+
+                    const hasOverlap = minPK <= approvedMaxPK && approvedMinPK <= maxPK
+
+                    if (hasOverlap) {
+                      setNotificationDialog({
+                        open: true,
+                        title: "Conflito de Localização",
+                        description: `Já existe um trabalho programado e aprovado para a mesma localização:\n\nAutoestrada: ${approvedPlan.autoEstrada}\nData: ${new Date(dateStr).toLocaleDateString("pt-PT")}\nPK: ${approvedMinPK.toFixed(3)} - ${approvedMaxPK.toFixed(3)}\n\nNão é possível adicionar esta atividade.`,
+                      })
+                      conflictDetected = true
+                      return
+                    }
+                  }
+                }
+              }
+              if (conflictDetected) return
+            }
+          }
+        }
+
+        currentDate.setDate(currentDate.getDate() + 1)
+      }
+
+      if (conflictDetected) {
+        return
+      }
+    }
+
+    // Create activity object
+    const atividadeData: Atividade = {
+      id: editingAtividadeId || `atividade-${Date.now()}`,
+      descricao: descricaoAtividade,
+      periodo: {
+        from: dateRange.from,
+        to: dateRange.to,
+      },
+      detalhesDiarios: { ...dailyDetails },
+      dayDataMap: { ...dayDataMap },
+      // Include other fields if they are part of the activity's data
+      pkInicialKm: dayDataMap[format(dateRange.from, "yyyy-MM-dd")]?.pkInicialKm || "",
+      pkInicialMeters: dayDataMap[format(dateRange.from, "yyyy-MM-dd")]?.pkInicialMeters || "",
+      pkFinalKm: dayDataMap[format(dateRange.from, "yyyy-MM-dd")]?.pkFinalKm || "",
+      pkFinalMeters: dayDataMap[format(dateRange.from, "yyyy-MM-dd")]?.pkFinalMeters || "",
+      sentido: dayDataMap[format(dateRange.from, "yyyy-MM-dd")]?.sentido || "",
+      perfil: dayDataMap[format(dateRange.from, "yyyy-MM-dd")]?.perfil || "",
+      localIntervencao: dayDataMap[format(dateRange.from, "yyyy-MM-dd")]?.localIntervencao || "",
+      restricoes: dayDataMap[format(dateRange.from, "yyyy-MM-dd")]?.restricoes || [],
+      esquema: dayDataMap[format(dateRange.from, "yyyy-MM-dd")]?.esquema || "",
+      tipoTrabalho: tipoTrabalho, // This is the main plan's tipoTrabalho
+      atividade: atividade, // This is the main plan's atividade
+      // Add other necessary fields for Atividade
+      observacoes: dayDataMap[format(dateRange.from, "yyyy-MM-dd")]?.observacoes || "",
+      // Note: dayDataMap contains details for all days in the range.
+      // If you need to store aggregate values for the activity itself,
+      // you might need to derive them or store them differently.
+    }
+
+    if (editingAtividadeId) {
+      // Update existing activity
+      setAtividades((prev) => prev.map((ativ) => (ativ.id === editingAtividadeId ? atividadeData : ativ)))
+    } else {
+      // Add new activity
+      setAtividades((prev) => [...prev, atividadeData])
+    }
+
+    // Reset form
+    resetAtividadeForm()
+  }
+
+  const handleEditarAtividade = (atividade: Atividade) => {
+    setEditingAtividadeId(atividade.id)
+    setDescricaoAtividade(atividade.descricao)
+    setDateRange(atividade.periodo)
+    setDayDataMap(atividade.dayDataMap || {}) // Restore day data
+    setDailyDetails(atividade.detalhesDiarios || {}) // Restore daily details
+
+    // Restore restricoes and esquema options for each day
+    if (atividade.dayDataMap) {
+      Object.entries(atividade.dayDataMap).forEach(([dateStr, dayData]) => {
+        if (dayData.perfil) {
+          updateRestricoesOptionsForDay(dateStr, dayData.perfil, true)
+        }
+        if (dayData.tipoTrabalhoDay) {
+          updateEsquemaOptionsForDay(dateStr, dayData.tipoTrabalhoDay, true)
+        }
+      })
+    }
+  }
+
+  const handleRemoverAtividade = (atividadeId: string) => {
+    setAtividades((prev) => prev.filter((ativ) => ativ.id !== atividadeId))
+
+    // If we're currently editing this activity, reset the form
+    if (editingAtividadeId === atividadeId) {
+      resetAtividadeForm()
+    }
   }
 
   const resetForm = () => {
@@ -554,165 +2584,163 @@ export default function ServiceSchedulerApp() {
     setConcessao("") // Reset concessao state
     setKmInicial("")
     setKmFinal("")
-    setIsUrgente(false)
+    setIsUrgente(false) // Reset urgent status on reset form
     setTrabalhoFixo(false)
     setTrabalhoMovel(false)
     setPerigosTemporarios(false)
     setAtividades([])
     resetAtividadeForm()
     setEditingPlanId(null)
+    setIsEditingApprovedPlan(false)
     setFiscalizacaoNome("")
     setFiscalizacaoContato("")
     setEntidadeExecutanteNome("")
     setEntidadeExecutanteContato("")
     setSinalizacaoNome("")
     setSinalizacaoContato("")
+    // Reset PK validation states
+    setPkValidationError({ show: false, dateStr: "", distance: 0 })
+    setDisabledTipoTrabalhoByDay({})
   }
 
-  const handleAdicionarAtividade = () => {
-    // Validação básica
-    if (!descricaoAtividade || !dateRange?.from || !dateRange?.to) {
-      setNotificationDialog({
-        open: true,
-        title: "Campos Obrigatórios",
-        description: "Por favor, preencha a descrição da atividade e o período antes de adicionar.",
-      })
-      return
+  const checkPKConflicts = (): { hasConflict: boolean; conflictMessage: string } => {
+    // Only check for prestador users
+    if (userRole !== "prestador") {
+      return { hasConflict: false, conflictMessage: "" }
     }
 
-    // Validar que todos os dias têm todos os campos preenchidos
-    const selectedDates = getDatesInRange(dateRange.from, dateRange.to)
-    const missingFieldsDays: string[] = []
-
-    selectedDates.forEach((date) => {
-      const dateStr = format(date, "yyyy-MM-dd")
-      const dayData = dayDataMap[dateStr]
-
-      if (!dayData) {
-        missingFieldsDays.push(format(date, "dd/MM/yyyy"))
-        return
+    // Get all approved plans
+    const approvedPlans = submittedPlans.filter((plan) => {
+      // Exclude the current plan being edited from the conflict check
+      if (editingPlanId && plan.id === editingPlanId) {
+        return false
       }
-
-      // Verificar se todos os campos obrigatórios estão preenchidos
-      // Excluir horaInicio e horaFim se 'todoDia' estiver ativo
-      const requiredFields: { [key: string]: string | undefined } = {
-        horaInicio: dayData.todoDia ? undefined : dayData.horaInicio,
-        horaFim: dayData.todoDia ? undefined : dayData.horaFim,
-        pkInicialKm: dayData.pkInicialKm,
-        pkInicialMeters: dayData.pkInicialMeters,
-        pkFinalKm: dayData.pkFinalKm,
-        pkFinalMeters: dayData.pkFinalMeters,
-        sentido: dayData.sentido,
-        perfil: dayData.perfil,
-        tipoTrabalhoDay: dayData.tipoTrabalhoDay,
-        localIntervencao: dayData.localIntervencao,
-        restricoes: dayData.restricoes,
-        esquema: dayData.esquema,
-        observacoes: dayData.observacoes,
-      }
-
-      const hasEmptyFields = Object.values(requiredFields).some(
-        (value) => value !== undefined && (value === null || value.trim() === ""),
-      )
-
-      if (hasEmptyFields) {
-        missingFieldsDays.push(format(date, "dd/MM/yyyy"))
-      }
+      return plan.status === "Confirmado"
     })
 
-    if (missingFieldsDays.length > 0) {
-      setNotificationDialog({
-        open: true,
-        title: "Campos Obrigatórios Incompletos",
-        description: `Por favor, preencha todos os campos obrigatórios para os seguintes dias: ${missingFieldsDays.join(", ")}. Certifique-se de preencher todos os campos relevantes.`,
-      })
-      return
-    }
+    // Check each activity in the current plan
+    for (const atividade of atividades) {
+      if (!atividade.periodo.from || !atividade.periodo.to) continue
 
-    const hasOverlap = selectedDates.some((date) => {
-      const dateStr = format(date, "yyyy-MM-dd")
-      return blockedDates.has(dateStr)
-    })
+      const selectedDates = getDatesInRange(atividade.periodo.from, atividade.periodo.to)
 
-    if (hasOverlap) {
-      setNotificationDialog({
-        open: true,
-        title: "Datas Bloqueadas",
-        description: "Uma ou mais datas selecionadas já estão bloqueadas por um plano aprovado.",
-      })
-      return
-    }
+      for (const date of selectedDates) {
+        const dateStr = format(date, "yyyy-MM-dd")
+        const dayData = dayDataMap[dateStr]
 
-    if (editingAtividadeId) {
-      // Atualizar atividade existente
-      setAtividades((prev) =>
-        prev.map((ativ) =>
-          ativ.id === editingAtividadeId
-            ? {
-                ...ativ,
-                descricaoAtividade,
-                periodo: dateRange,
-                pkInicialKm, // Update split PK fields
-                pkInicialMeters,
-                pkFinalKm,
-                pkFinalMeters,
-                sentido,
-                perfil,
-                localIntervencao,
-                restricoes,
-                esquema,
-                observacoes,
-                detalhesDiarios: dailyDetails,
-              }
-            : ativ,
-        ),
-      )
-    } else {
-      // Adicionar nova atividade
-      const novaAtividade: Atividade = {
-        id: `atividade-${Date.now()}`,
-        descricaoAtividade,
-        periodo: dateRange,
-        pkInicialKm, // Add split PK fields
-        pkInicialMeters,
-        pkFinalKm,
-        pkFinalMeters,
-        sentido,
-        perfil,
-        localIntervencao,
-        restricoes,
-        esquema,
-        observacoes,
-        detalhesDiarios: dailyDetails,
+        if (!dayData) {
+          continue
+        }
+
+        // Calculate PK interval for current plan
+        const currentPkInicial =
+          Number.parseFloat(dayData.pkInicialKm || "0") + Number.parseFloat(dayData.pkInicialMeters || "0") / 1000
+        const currentPkFinal =
+          Number.parseFloat(dayData.pkFinalKm || "0") + Number.parseFloat(dayData.pkFinalMeters || "0") / 1000
+
+        // Skip if PK values are not set
+        if (currentPkInicial === 0 && currentPkFinal === 0) {
+          continue
+        }
+
+        // Normalize the interval (ensure inicial <= final)
+        const currentMin = Math.min(currentPkInicial, currentPkFinal)
+        const maxPK = Math.max(currentPkInicial, currentPkFinal)
+
+        // Check against all approved plans
+        for (const approvedPlan of approvedPlans) {
+          // Skip if different autoestrada
+          if (approvedPlan.autoEstrada !== autoEstrada) {
+            continue
+          }
+
+          // Check each activity in the approved plan
+          for (const approvedAtividade of approvedPlan.atividades) {
+            if (!approvedAtividade.periodo.from || !approvedAtividade.periodo.to) continue
+
+            const approvedDates = getDatesInRange(approvedAtividade.periodo.from, approvedAtividade.periodo.to)
+
+            // Check if the date matches
+            const dateMatches = approvedDates.some((approvedDate) => {
+              return format(approvedDate, "yyyy-MM-dd") === dateStr
+            })
+
+            if (!dateMatches) continue
+
+            // Get PK data for this date in the approved plan
+            const approvedDayData = approvedAtividade.dayDataMap?.[dateStr]
+            if (!approvedDayData) {
+              continue
+            }
+
+            // Calculate PK interval for approved plan
+            const approvedPkInicial =
+              Number.parseFloat(approvedDayData.pkInicialKm || "0") +
+              Number.parseFloat(approvedDayData.pkInicialMeters || "0") / 1000
+            const approvedPkFinal =
+              Number.parseFloat(approvedDayData.pkFinalKm || "0") +
+              Number.parseFloat(approvedDayData.pkFinalMeters || "0") / 1000
+
+            // Skip if PK values are not set
+            if (approvedPkInicial === 0 && approvedPkFinal === 0) {
+              continue
+            }
+
+            // Normalize the approved interval
+            const approvedMin = Math.min(approvedPkInicial, approvedPkFinal)
+            const approvedMax = Math.max(approvedPkInicial, approvedPkFinal)
+
+            // Check for overlap: two intervals [a1, a2] and [b1, b2] overlap if a1 <= b2 AND b1 <= a2
+            const hasOverlap = currentMin <= approvedMax && approvedMin <= maxPK
+
+            if (hasOverlap) {
+              const conflictMessage = `Já existe um trabalho aprovado para a mesma localização:\n\nAuto Estrada: ${autoEstrada}\nData: ${format(date, "dd/MM/yyyy")}\nIntervalo Aprovado: PK ${approvedMin.toFixed(3)} - ${approvedMax.toFixed(3)}\nSeu Intervalo: PK ${currentMin.toFixed(3)} - ${maxPK.toFixed(3)}\n\nPor favor, escolha um intervalo diferente.`
+
+              return { hasConflict: true, conflictMessage }
+            }
+          }
+        }
       }
-      setAtividades((prev) => [...prev, novaAtividade])
     }
 
-    resetAtividadeForm()
+    return { hasConflict: false, conflictMessage: "" }
   }
 
-  const handleEditarAtividade = (atividade: Atividade) => {
-    setEditingAtividadeId(atividade.id)
-    setDescricaoAtividade(atividade.descricaoAtividade)
-    setDateRange(atividade.periodo)
-    setPkInicialKm(atividade.pkInicialKm) // Load split PK fields
-    setPkInicialMeters(atividade.pkInicialMeters)
-    setPkFinalKm(atividade.pkFinalKm)
-    setPkFinalMeters(atividade.pkFinalMeters)
-    setSentido(atividade.sentido)
-    setPerfil(atividade.perfil)
-    setLocalIntervencao(atividade.localIntervencao)
-    setRestricoes(atividade.restricoes)
-    setEsquema(atividade.esquema)
-    setObservacoes(atividade.observacoes)
-    setDailyDetails(atividade.detalhesDiarios)
-  }
+  const handleSubmitPlano = () => {
+    // Validate required fields for the plan
+    if (!vegetalNumero.trim()) {
+      setNotificationDialog({
+        open: true,
+        title: "Erro na Submissão",
+        description: "Por favor, preencha o Sublanço.",
+      })
+      return
+    }
+    if (!concessao) {
+      setNotificationDialog({
+        open: true,
+        title: "Erro na Submissão",
+        description: "Por favor, selecione a Concessão.",
+      })
+      return
+    }
+    if (!autoEstrada) {
+      setNotificationDialog({
+        open: true,
+        title: "Erro na Submissão",
+        description: "Por favor, selecione a Auto Estrada.",
+      })
+      return
+    }
+    if (!kmInicial.trim() || !kmFinal.trim()) {
+      setNotificationDialog({
+        open: true,
+        title: "Erro na Submissão",
+        description: "Por favor, preencha o Km inicial e Km final.",
+      })
+      return
+    }
 
-  const handleRemoverAtividade = (atividadeId: string) => {
-    setAtividades((prev) => prev.filter((ativ) => ativ.id !== atividadeId))
-  }
-
-  const handleSubmitOrUpdateVegetalPlan = () => {
     if (atividades.length === 0) {
       setNotificationDialog({
         open: true,
@@ -720,6 +2748,90 @@ export default function ServiceSchedulerApp() {
         description: "Por favor, adicione pelo menos uma atividade ao plano.",
       })
       return
+    }
+
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`
+
+    for (const atividade of atividades) {
+      if (atividade.periodo.from && atividade.periodo.to) {
+        const selectedDates = getDatesInRange(atividade.periodo.from, atividade.periodo.to)
+
+        for (const date of selectedDates) {
+          const dateStr = format(date, "yyyy-MM-dd")
+          const dayData = dayDataMap[dateStr]
+          const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+
+          // If the date is before today, reject
+          if (dateOnly < today) {
+            setNotificationDialog({
+              open: true,
+              title: "Data Inválida",
+              description: `Não é possível submeter planos de trabalho para datas passadas. A atividade "${atividade.descricao}" contém a data ${format(date, "dd/MM/yyyy")} que já passou.`,
+            })
+            return
+          }
+
+          // If the date is today and not "todo o dia", check if the time is in the past
+          if (dateOnly.getTime() === today.getTime() && dayData && !dayData.todoDia) {
+            if (dayData.horaInicio && dayData.horaInicio < currentTime) {
+              setNotificationDialog({
+                open: true,
+                title: "Hora Inválida",
+                description: `Não é possível submeter planos de trabalho para horas passadas. A atividade "${atividade.descricao}" tem hora de início ${dayData.horaInicio} no dia ${format(date, "dd/MM/yyyy")} que já passou.`,
+              })
+              return
+            }
+          }
+        }
+      }
+    }
+
+    // Final check on time validity for all days in activities
+    let allTimesValid = true
+    atividades.forEach((atividade) => {
+      if (atividade.periodo.from && atividade.periodo.to) {
+        const selectedDates = getDatesInRange(atividade.periodo.from, atividade.periodo.to)
+        selectedDates.forEach((date) => {
+          const dateStr = format(date, "yyyy-MM-dd")
+          const dayData = dayDataMap[dateStr]
+          if (dayData && !dayData.todoDia) {
+            if (!validateTime(dayData.horaInicio) || !validateTime(dayData.horaFim)) {
+              setNotificationDialog({
+                open: true,
+                title: "Formato de Hora Inválido",
+                description: `Por favor, verifique o formato da Hora de Início e Hora de Fim para ${format(date, "dd/MM/yyyy", { locale: ptBR })}. O formato deve ser HH:MM.`,
+              })
+              allTimesValid = false
+              return // Stop inner loop
+            }
+            if (!compareTime(dayData.horaInicio, dayData.horaFim)) {
+              setNotificationDialog({
+                open: true,
+                title: "Conflito de Horário",
+                description: `A Hora de Fim não pode ser anterior à Hora de Início no dia ${format(date, "dd/MM/yyyy", { locale: ptBR })}.`,
+              })
+              allTimesValid = false
+              return // Stop inner loop
+            }
+          }
+        })
+      }
+      if (!allTimesValid) return // Stop outer loop if invalid time found
+    })
+
+    if (!allTimesValid) return // Prevent submission if times are invalid
+
+    if (userRole === "prestador") {
+      const { hasConflict, conflictMessage } = checkPKConflicts()
+      if (hasConflict) {
+        setPkConflictDialog({
+          open: true,
+          conflictDetails: conflictMessage,
+        })
+        return // Prevent submission
+      }
     }
 
     if (editingPlanId) {
@@ -730,23 +2842,26 @@ export default function ServiceSchedulerApp() {
                 ...plan,
                 numero: vegetalNumero,
                 tipoTrabalho: tipoTrabalho,
-                atividade: atividade, // Save atividade when updating
-                autoEstrada: autoEstrada, // Save autoEstrada when updating
-                concessao: concessao, // Save concessao when updating
+                atividade: atividade,
+                autoEstrada: autoEstrada,
+                concessao: concessao,
                 atividades: atividades,
-                status: "Pendente Confirmação",
+                status: isEditingApprovedPlan ? "Editado - Pendente Aprovação" : "Pendente Aprovação",
                 comentarioGO: undefined,
                 kmInicial,
                 kmFinal,
                 trabalhoFixo,
                 trabalhoMovel,
-                perigosTemporarios, // Update temporary dangers
+                isUrgente,
+                perigosTemporarios,
                 fiscalizacaoNome,
                 fiscalizacaoContato,
                 entidadeExecutanteNome,
                 entidadeExecutanteContato,
                 sinalizacaoNome,
                 sinalizacaoContato,
+                // Only clear originalValues when plan is approved or rejected, not when resubmitted
+                originalValues: plan.originalValues,
               }
             : plan,
         ),
@@ -754,7 +2869,9 @@ export default function ServiceSchedulerApp() {
       setNotificationDialog({
         open: true,
         title: "Plano Submetido",
-        description: "Plano de trabalho submetido com sucesso. Status: Pendente de Confirmação",
+        description: isEditingApprovedPlan
+          ? "Plano de trabalho editado e submetido com sucesso. Status: Editado - Pendente Aprovação"
+          : "Plano de trabalho submetido com sucesso. Status: Pendente de Aprovação",
       })
     } else {
       const newPlan: SubmittedPlan = {
@@ -765,9 +2882,10 @@ export default function ServiceSchedulerApp() {
         autoEstrada: autoEstrada, // Save autoEstrada when creating
         concessao: concessao, // Save concessao when creating
         atividades: atividades,
-        status: "Pendente Confirmação",
+        status: "Pendente Aprovação", // Changed from "Pendente Confirmação"
         tipo: "Manutenção Vegetal",
         isInISistema: false,
+        isUrgente,
         kmInicial,
         kmFinal,
         trabalhoFixo,
@@ -784,7 +2902,7 @@ export default function ServiceSchedulerApp() {
       setNotificationDialog({
         open: true,
         title: "Plano Submetido",
-        description: "Plano de trabalho submetido com sucesso. Status: Pendente de Confirmação",
+        description: "Plano de trabalho submetido com sucesso. Status: Pendente de Aprovação", // Changed from "Pendente de Confirmação"
       })
     }
     resetForm()
@@ -802,12 +2920,16 @@ export default function ServiceSchedulerApp() {
 
   const confirmApproval = () => {
     setSubmittedPlans((prev) =>
-      prev.map((plan) => (plan.id === confirmationDialog.planId ? { ...plan, status: "Confirmado" } : plan)),
+      prev.map((plan) =>
+        plan.id === confirmationDialog.planId
+          ? { ...plan, status: "Confirmado", originalValues: undefined } // Clear originalValues on confirmation
+          : plan,
+      ),
     )
     setNotificationDialog({
       open: true,
       title: "Plano Aprovado!",
-      description: "O plano foi aprovado com sucesso e as datas foram bloqueadas no calendário.",
+      description: "O plano foi aprovado com sucesso.",
     })
     setConfirmationDialog({ open: false, type: "approve", planId: "", planTitle: "" })
   }
@@ -820,6 +2942,7 @@ export default function ServiceSchedulerApp() {
               ...plan,
               status: "Rejeitado",
               comentarioGO: rejectionComment || undefined,
+              originalValues: undefined, // Clear originalValues on rejection
             }
           : plan,
       ),
@@ -835,16 +2958,48 @@ export default function ServiceSchedulerApp() {
 
   const handleEditPlan = (planToEdit: SubmittedPlan) => {
     setEditingPlanId(planToEdit.id)
+    setIsEditingApprovedPlan(planToEdit.status === "Confirmado" || planToEdit.status === "Editado - Pendente Aprovação")
+
+    if (planToEdit.status === "Confirmado" && !planToEdit.originalValues) {
+      setSubmittedPlans((prev) =>
+        prev.map((plan) =>
+          plan.id === planToEdit.id
+            ? {
+                ...plan,
+                originalValues: {
+                  numero: plan.numero,
+                  tipoTrabalho: plan.tipoTrabalho,
+                  atividade: plan.atividade,
+                  autoEstrada: plan.autoEstrada,
+                  concessao: plan.concessao,
+                  kmInicial: plan.kmInicial,
+                  kmFinal: plan.kmFinal,
+                  fiscalizacaoNome: plan.fiscalizacaoNome,
+                  fiscalizacaoContato: plan.fiscalizacaoContato,
+                  entidadeExecutanteNome: plan.entidadeExecutanteNome,
+                  entidadeExecutanteContato: plan.entidadeExecutanteContato,
+                  sinalizacaoNome: plan.sinalizacaoNome,
+                  sinalizacaoContato: plan.sinalizacaoContato,
+                  // Deep copy activities array
+                  atividades: JSON.parse(JSON.stringify(plan.atividades)),
+                },
+              }
+            : plan,
+        ),
+      )
+    }
+
     setVegetalNumero(planToEdit.numero)
-    setTipoTrabalho(planToEdit.tipoTrabalho)
-    setAtividade(planToEdit.atividade || "") // Load atividade when editing
-    setAutoEstrada(planToEdit.autoEstrada || "") // Load autoEstrada when editing
-    setConcessao(planToEdit.concessao || "") // Load concessao when editing
+    setTipoTrabalho(planToEdit.tipoTrabalho || "")
+    setAtividade(planToEdit.atividade || "")
+    setAutoEstrada(planToEdit.autoEstrada || "")
+    setConcessao(planToEdit.concessao || "")
     setKmInicial(planToEdit.kmInicial || "")
     setKmFinal(planToEdit.kmFinal || "")
     setTrabalhoFixo(planToEdit.trabalhoFixo || false)
     setTrabalhoMovel(planToEdit.trabalhoMovel || false)
-    setPerigosTemporarios(planToEdit.perigosTemporarios || false) // Load temporary dangers
+    setPerigosTemporarios(planToEdit.perigosTemporarios || false)
+    setIsUrgente(planToEdit.isUrgente || false)
     setAtividades(planToEdit.atividades)
     setFiscalizacaoNome(planToEdit.fiscalizacaoNome || "")
     setFiscalizacaoContato(planToEdit.fiscalizacaoContato || "")
@@ -858,8 +3013,7 @@ export default function ServiceSchedulerApp() {
   const datesToRender = getDatesInRange(dateRange?.from, dateRange?.to)
 
   const disableBlockedDates = (date: Date) => {
-    const dateStr = format(date, "yyyy-MM-dd")
-    return blockedDates.has(dateStr) || isBefore(startOfDay(date), startOfDay(new Date()))
+    return isBefore(startOfDay(date), startOfDay(new Date()))
   }
 
   const handleViewWeeklyPlans = (weekId: string) => {
@@ -871,20 +3025,31 @@ export default function ServiceSchedulerApp() {
     endDate.setDate(startDate.getDate() + 4)
 
     const plansForWeek = submittedPlans.filter((plan) => {
-      if (plan.atividades.length === 0 || !plan.atividades[0].periodo.from || plan.status !== "Confirmado") return false
+      if (plan.atividades.length === 0 || !plan.atividades[0].periodo.from) return false
+
+      // Show approved plans, or edited/rejected plans that are already in iSistema
+      const shouldShowInCCO =
+        plan.status === "Confirmado" ||
+        ((plan.status === "Editado - Pendente Aprovação" || plan.status === "Rejeitado") && plan.isInISistema)
+
+      if (!shouldShowInCCO) return false
+
       const planWeekNum = getWeek(plan.atividades[0].periodo.from, { locale: ptBR, weekStartsOn: 1 })
       const planYear = getYear(plan.atividades[0].periodo.from)
       return planWeekNum === weekNum && planYear === year
     })
     setCurrentWeekPlans(plansForWeek)
     setCurrentWeekTitle(
-      `Planos da Semana ${weekNum} (${format(startDate, "dd/MM", { locale: ptBR })} - ${format(endDate, "dd/MM", { locale: ptBR })})`,
+      `Planos da Semana ${weekNum} (${format(startDate, "dd/MM", { locale: ptBR })} - ${format(endDate, "dd/MM/yyyy", { locale: ptBR })})`,
     )
     setIsWeeklyPlansDialogOpen(true)
   }
 
   const handleToggleISistemaStatus = (planId: string) => {
     setSubmittedPlans((prev) =>
+      prev.map((plan) => (plan.id === planId ? { ...plan, isInISistema: !plan.isInISistema } : plan)),
+    )
+    setCurrentWeekPlans((prev) =>
       prev.map((plan) => (plan.id === planId ? { ...plan, isInISistema: !plan.isInISistema } : plan)),
     )
   }
@@ -913,12 +3078,20 @@ export default function ServiceSchedulerApp() {
     })
   }
 
+  const getStatusDisplayText = (status: string) => {
+    if (status === "Confirmado") return "Aprovado"
+    if (status === "Editado - Pendente Aprovação") return "Editado - Pendente Aprovação"
+    return status
+  }
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "Confirmado":
         return "bg-green-100 border-green-300 text-green-800"
-      case "Pendente Confirmação":
+      case "Pendente Aprovação":
         return "bg-yellow-100 border-yellow-300 text-yellow-800"
+      case "Editado - Pendente Aprovação":
+        return "bg-orange-100 border-orange-300 text-orange-800"
       case "Rejeitado":
         return "bg-destructive/10 border-destructive text-destructive"
       default:
@@ -934,13 +3107,75 @@ export default function ServiceSchedulerApp() {
     return Array.from(types)
   }
 
+  const openRemovalDialog = (planId: string, planTitle: string) => {
+    setRemovalDialog({
+      open: true,
+      planId,
+      planTitle,
+    })
+    setRemovalReason("")
+  }
+
+  const confirmRemovalApproval = () => {
+    setSubmittedPlans((prev) =>
+      prev.map((plan) =>
+        plan.id === removalDialog.planId
+          ? {
+              ...plan,
+              status: "Pendente Aprovação",
+              comentarioGO: removalReason || undefined,
+              originalValues: undefined, // Clear originalValues after removal
+            }
+          : plan,
+      ),
+    )
+    setNotificationDialog({
+      open: true,
+      title: "Remoção de aprovação efetuada com sucesso",
+      description: "A aprovação do plano de trabalho foi removida e o status foi alterado para Pendente Aprovação.",
+    })
+    setRemovalDialog({ open: false, planId: "", planTitle: "" })
+    setRemovalReason("")
+  }
+
+  const handleDateRangeChange = (range: DayPickerDateRange | undefined) => {
+    // If range is undefined or has no from date, clear the selection
+    if (!range || !range.from) {
+      setDateRange(undefined)
+      return
+    }
+
+    // If only from date is set (single click), set it
+    if (!range.to) {
+      setDateRange(range)
+      return
+    }
+
+    // Validate that from and to are in the correct order
+    if (range.from && range.to && range.from > range.to) {
+      // Swap if they're in wrong order
+      setDateRange({ from: range.to, to: range.from })
+      return
+    }
+
+    // and normalize them to start of day to prevent time-based comparison issues
+    const normalizedFrom = range.from ? startOfDay(range.from) : undefined
+    const normalizedTo = range.to ? startOfDay(range.to) : undefined
+
+    // Set the valid range with normalized dates
+    setDateRange({
+      from: normalizedFrom,
+      to: normalizedTo,
+    })
+  }
+
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
             <div className="mx-auto mb-4 w-12 h-12 bg-primary rounded-full flex items-center justify-center">
-              <Wrench className="w-6 h-6 text-white" />
+              <Wrench className="w-6 h-4 text-white" />
             </div>
             <CardTitle className="text-2xl">Portal de agendamento</CardTitle>
             <CardDescription>Plataforma de Agendamento de Planos de Trabalho</CardDescription>
@@ -984,7 +3219,6 @@ export default function ServiceSchedulerApp() {
   }
 
   return (
-    // Replace hardcoded grays with semantic tokens
     <div className="min-h-screen bg-secondary">
       <header className="bg-card shadow-sm border-b">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
@@ -1016,29 +3250,27 @@ export default function ServiceSchedulerApp() {
         {userRole === "prestador" && (
           <Card>
             <CardHeader>
-              <div className="flex justify-between items-start">
-                <div>
-                  <CardTitle className="flex items-center space-x-2">
-                    <Leaf className="w-5 h-5 text-green-600" />
-                    <span>
-                      {autoEstrada || vegetalNumero || tipoTrabalho
-                        ? `${autoEstrada || "..."} - ${vegetalNumero || "..."} - ${tipoTrabalho || "..."}`
-                        : "Novo Plano de Trabalho"}
-                    </span>
-                  </CardTitle>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Label htmlFor="urgente-checkbox" className="text-sm font-medium">
-                    Urgente?
-                  </Label>
-                  <Checkbox id="urgente-checkbox" checked={isUrgente} onCheckedChange={setIsUrgente} />
-                </div>
+              <CardTitle className="flex items-center space-x-2">
+                <Leaf className="w-5 h-5 text-green-600" />
+                <span className="font-semibold text-lg">
+                  {autoEstrada || vegetalNumero || tipoTrabalho || atividade
+                    ? `${autoEstrada || "..."} - ${vegetalNumero || "..."} - ${tipoTrabalho || "..."}${atividade ? `/${atividade}` : ""}`
+                    : "Novo Plano de Trabalho"}
+                </span>
+              </CardTitle>
+              <div className="flex items-center space-x-2 mt-2">
+                <Label htmlFor="urgente-checkbox" className="text-sm font-medium">
+                  Urgente?
+                </Label>
+                <Checkbox id="urgente-checkbox" checked={isUrgente} onCheckedChange={setIsUrgente} />
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="concessao">Concessão</Label>
+                  <Label className="my-1.5" htmlFor="concessao">
+                    Concessão
+                  </Label>
                   <Select value={concessao} onValueChange={setConcessao}>
                     <SelectTrigger id="concessao">
                       <SelectValue placeholder="Selecione a concessão" />
@@ -1059,34 +3291,41 @@ export default function ServiceSchedulerApp() {
                     onValueChange={setAutoEstrada}
                     label="Auto Estrada"
                     placeholder="Selecione a Auto Estrada"
+                    concessao={concessao}
+                    disabled={!concessao}
                   />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-0.5">
+                <div className="flex gap-4">
                   <div className="max-w-[120px]">
-                    <Label htmlFor="km-inicial">Km inicial</Label>
+                    <Label className="my-1.5" htmlFor="km-inicial">
+                      Km inicial
+                    </Label>
                     <Input
                       id="km-inicial"
                       type="number"
                       placeholder="Ex: 100"
                       value={kmInicial}
                       onChange={(e) => setKmInicial(e.target.value)}
+                      disabled={!autoEstrada}
                     />
                   </div>
                   <div className="max-w-[120px]">
-                    <Label htmlFor="km-final">Km final</Label>
+                    <Label className="my-1.5" htmlFor="km-final">
+                      Km final
+                    </Label>
                     <Input
                       id="km-final"
                       type="number"
                       placeholder="Ex: 150"
                       value={kmFinal}
                       onChange={(e) => setKmFinal(e.target.value)}
+                      disabled={!kmInicial}
                     />
                   </div>
                 </div>
 
                 {editingPlanId && getEditingPlan()?.comentarioGO && (
-                  // Replace bg-red-50 and border-red-200 with destructive tokens
                   <div className="p-4 bg-destructive/10 border border-destructive rounded-lg">
                     <Label className="text-sm font-semibold text-red-800 mb-2 block">
                       Comentário do Gestor de Operações:
@@ -1097,45 +3336,67 @@ export default function ServiceSchedulerApp() {
 
                 <div className="space-y-4">
                   <div>
-                    <Label htmlFor="vegetal-numero">Sublanço</Label>
+                    <Label className="my-1.5" htmlFor="sublanco">
+                      Sublanço
+                    </Label>
                     <Input
-                      id="vegetal-numero"
+                      id="sublanco"
                       placeholder="Ex: MV-001"
                       value={vegetalNumero}
-                      onChange={(e) => setVegetalNumero(e.target.value)}
+                      readOnly
+                      className="max-w-md bg-muted cursor-not-allowed"
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
+                  <div className="flex gap-4">
                     <div>
-                      <Label htmlFor="vegetal-tipo-trabalho">Tipo de Trabalho</Label>
-                      <Select value={tipoTrabalho} onValueChange={setTipoTrabalho}>
-                        <SelectTrigger id="vegetal-tipo-trabalho">
+                      <Label className="my-1.5" htmlFor="tipo-de-trabalho">
+                        Tipo de Trabalho
+                      </Label>
+                      <Select value={tipoTrabalho} onValueChange={setTipoTrabalho} disabled={!vegetalNumero}>
+                        <SelectTrigger id="tipo-de-trabalho">
                           <SelectValue placeholder="Selecione o tipo de trabalho" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="opcao1">Opção 1 (a definir)</SelectItem>
-                          <SelectItem value="opcao2">Opção 2 (a definir)</SelectItem>
-                          <SelectItem value="opcao3">Opção 3 (a definir)</SelectItem>
+                          {tipoTrabalhoOptions.length > 0 ? (
+                            tipoTrabalhoOptions.map((tipo) => (
+                              <SelectItem key={tipo} value={tipo}>
+                                {tipo}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="loading" disabled>
+                              Carregando...
+                            </SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
 
                     <div>
-                      <Label htmlFor="atividade">Atividade</Label>
-                      <Select value={atividade} onValueChange={setAtividade}>
+                      <Label className="my-1.5" htmlFor="atividade">
+                        Atividade
+                      </Label>
+                      <Select value={atividade} onValueChange={setAtividade} disabled={!tipoTrabalho}>
                         <SelectTrigger id="atividade">
                           <SelectValue placeholder="Selecione a atividade" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="limpeza">Limpeza</SelectItem>
-                          <SelectItem value="poda">Poda</SelectItem>
-                          <SelectItem value="reparacao">Reparação</SelectItem>
-                          <SelectItem value="sinalizacao">Sinalização</SelectItem>
-                          <SelectItem value="pavimentacao">Pavimentação</SelectItem>
-                          <SelectItem value="inspecao">Inspeção</SelectItem>
-                          <SelectItem value="manutencao-preventiva">Manutenção Preventiva</SelectItem>
-                          <SelectItem value="manutencao-corretiva">Manutenção Corretiva</SelectItem>
+                          {atividadeOptions.length > 0 ? (
+                            atividadeOptions.map((atv) => (
+                              <SelectItem key={atv} value={atv}>
+                                {atv}
+                              </SelectItem>
+                            ))
+                          ) : tipoTrabalho ? (
+                            <SelectItem value="none" disabled>
+                              Nenhuma atividade disponível
+                            </SelectItem>
+                          ) : (
+                            <SelectItem value="select-tipo" disabled>
+                              Selecione o tipo de trabalho primeiro
+                            </SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1164,8 +3425,8 @@ export default function ServiceSchedulerApp() {
                             <AccordionTrigger className="hover:no-underline">
                               <div className="flex items-center justify-between w-full pr-4">
                                 <span className="font-medium">
-                                  Atividade {index + 1}: {atividade.descricaoAtividade.substring(0, 50)}
-                                  {atividade.descricaoAtividade.length > 50 && "..."}
+                                  Atividade {index + 1}: {atividade.descricao.substring(0, 50)}
+                                  {atividade.descricao.length > 50 && "..."}
                                 </span>
                                 <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                                   <Button variant="ghost" size="sm" onClick={() => handleEditarAtividade(atividade)}>
@@ -1186,13 +3447,13 @@ export default function ServiceSchedulerApp() {
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                                   <div>
                                     <Label className="font-semibold">Descrição:</Label>
-                                    <p className="text-foreground">{atividade.descricaoAtividade}</p>
+                                    <p className="text-foreground">{atividade.descricao}</p>
                                   </div>
                                   <div>
                                     <Label className="font-semibold">Período:</Label>
                                     <p className="text-foreground">
                                       {atividade.periodo.from && atividade.periodo.to
-                                        ? `${format(atividade.periodo.from, "dd/MM/yyyy")}-${format(atividade.periodo.to, "dd/MM/yyyy")}`
+                                        ? `${format(atividade.periodo.from, "dd/MM/yyyy", { locale: ptBR })}-${format(atividade.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
                                         : "N/A"}
                                     </p>
                                   </div>
@@ -1231,7 +3492,7 @@ export default function ServiceSchedulerApp() {
                                   {atividade.restricoes && (
                                     <div>
                                       <Label className="font-semibold">Restrições:</Label>
-                                      <p className="text-foreground">{atividade.restricoes}</p>
+                                      <p className="text-foreground">{atividade.restricoes.join(", ")}</p>
                                     </div>
                                   )}
                                   {atividade.esquema && (
@@ -1262,18 +3523,20 @@ export default function ServiceSchedulerApp() {
                       placeholder="Descreva a atividade a realizar..."
                       value={descricaoAtividade}
                       onChange={(e) => setDescricaoAtividade(e.target.value)}
-                      rows={3}
+                      rows={1}
+                      className="max-w-md my-1"
                     />
                   </div>
 
                   <div>
-                    <Label>Período</Label>
+                    <Label className="my-1.5">Período</Label>
                     <Calendar
+                      key={dateRange?.from?.toISOString() || "no-selection"} // Force re-render on selection change
                       initialFocus
-                      mode="range"
+                      mode="single"
                       defaultMonth={dateRange?.from}
                       selected={dateRange}
-                      onSelect={setDateRange}
+                      onDayClick={handleDayClick} // Use custom handler
                       numberOfMonths={3}
                       locale={ptBR}
                       className="rounded-md border shadow"
@@ -1307,25 +3570,41 @@ export default function ServiceSchedulerApp() {
                           const dayData = dayDataMap[dateStr]
                           if (!dayData) return null
 
+                          const isLastDay = dateRange.to && format(dateRange.to, "yyyy-MM-dd") === dateStr
+
                           return (
                             <div
                               key={dateStr}
                               className="flex-shrink-0 border rounded-xl p-3 shadow-sm bg-white min-w-[300px] lg:min-w-[350px]"
                             >
                               {/* Date header */}
-                              <div className="mb-3 pb-2 border-b">
-                                <h4 className="font-semibold text-foreground">
-                                  {format(date, "dd/MM/yyyy", { locale: ptBR })}
-                                </h4>
-                                <p className="text-xs text-muted-foreground capitalize">
-                                  {format(date, "EEEE", { locale: ptBR })}
-                                </p>
+                              <div className="mb-3 pb-2 border-b flex items-start justify-between">
+                                <div>
+                                  <h4 className="font-semibold text-foreground">
+                                    {format(date, "dd/MM/yyyy", { locale: ptBR })}
+                                  </h4>
+                                  <p className="text-xs text-muted-foreground capitalize">
+                                    {format(date, "EEEE", { locale: ptBR })}
+                                  </p>
+                                </div>
+                                {!isLastDay && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => copyToNextDay(dateStr)}
+                                    className="flex items-center gap-1 text-xs h-8"
+                                  >
+                                    <Copy className="h-3 w-3" />
+                                    Copiar para dia seguinte
+                                  </Button>
+                                )}
                               </div>
 
                               {/* Time fields - horizontal layout */}
                               <div className="flex flex-row gap-2 mb-3">
                                 <div className="flex-1">
-                                  <Label htmlFor={`hora-inicio-${dateStr}`} className="text-xs">
+                                  <Label htmlFor={`hora-inicio-${dateStr}`} className="text-xs my-1">
                                     Hora de Início (24h)
                                   </Label>
                                   <Input
@@ -1342,7 +3621,7 @@ export default function ServiceSchedulerApp() {
                                   />
                                 </div>
                                 <div className="flex-1">
-                                  <Label htmlFor={`hora-fim-${dateStr}`} className="text-xs">
+                                  <Label htmlFor={`hora-fim-${dateStr}`} className="text-xs my-1">
                                     Hora de Fim (24h)
                                   </Label>
                                   <Input
@@ -1377,7 +3656,7 @@ export default function ServiceSchedulerApp() {
                                 <div className="space-y-3 pt-3 border-t">
                                   <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                      <Label className="text-xs">Pk inicial</Label>
+                                      <Label className="text-xs my-1">Pk inicial</Label>
                                       <div className="flex items-center gap-2">
                                         <Input
                                           type="text"
@@ -1387,6 +3666,14 @@ export default function ServiceSchedulerApp() {
                                           onChange={(e) => {
                                             const value = e.target.value.replace(/[^0-9]/g, "")
                                             updateDayData(dateStr, "pkInicialKm", value)
+                                            reEnableTrabalhosFix(dateStr)
+                                            if (value) {
+                                              setTimeout(() => {
+                                                updateSublancoForDay(dateStr)
+                                                const updatedDayData = { ...dayDataMap[dateStr], pkInicialKm: value }
+                                                validatePKDistance(dateStr, updatedDayData)
+                                              }, 100)
+                                            }
                                           }}
                                           className="text-sm w-16"
                                           maxLength={3}
@@ -1401,6 +3688,16 @@ export default function ServiceSchedulerApp() {
                                             const value = e.target.value.replace(/[^0-9]/g, "")
                                             if (Number.parseInt(value) <= 999 || value === "") {
                                               updateDayData(dateStr, "pkInicialMeters", value)
+                                              reEnableTrabalhosFix(dateStr)
+                                              if (value) {
+                                                setTimeout(() => {
+                                                  const updatedDayData = {
+                                                    ...dayDataMap[dateStr],
+                                                    pkInicialMeters: value,
+                                                  }
+                                                  validatePKDistance(dateStr, updatedDayData)
+                                                }, 100)
+                                              }
                                             }
                                           }}
                                           className="text-sm w-16"
@@ -1409,7 +3706,7 @@ export default function ServiceSchedulerApp() {
                                       </div>
                                     </div>
                                     <div>
-                                      <Label className="text-xs">Pk final</Label>
+                                      <Label className="text-xs my-1">Pk final</Label>
                                       <div className="flex items-center gap-2">
                                         <Input
                                           type="text"
@@ -1419,6 +3716,14 @@ export default function ServiceSchedulerApp() {
                                           onChange={(e) => {
                                             const value = e.target.value.replace(/[^0-9]/g, "")
                                             updateDayData(dateStr, "pkFinalKm", value)
+                                            reEnableTrabalhosFix(dateStr)
+                                            if (value) {
+                                              setTimeout(() => {
+                                                updateSublancoForDay(dateStr)
+                                                const updatedDayData = { ...dayDataMap[dateStr], pkFinalKm: value }
+                                                validatePKDistance(dateStr, updatedDayData)
+                                              }, 100)
+                                            }
                                           }}
                                           className="text-sm w-16"
                                           maxLength={3}
@@ -1433,6 +3738,16 @@ export default function ServiceSchedulerApp() {
                                             const value = e.target.value.replace(/[^0-9]/g, "")
                                             if (Number.parseInt(value) <= 999 || value === "") {
                                               updateDayData(dateStr, "pkFinalMeters", value)
+                                              reEnableTrabalhosFix(dateStr)
+                                              if (value) {
+                                                setTimeout(() => {
+                                                  const updatedDayData = {
+                                                    ...dayDataMap[dateStr],
+                                                    pkFinalMeters: value,
+                                                  }
+                                                  validatePKDistance(dateStr, updatedDayData)
+                                                }, 100)
+                                              }
                                             }
                                           }}
                                           className="text-sm w-16"
@@ -1443,12 +3758,77 @@ export default function ServiceSchedulerApp() {
                                   </div>
 
                                   <div>
-                                    <Label htmlFor={`sentido-${dateStr}`} className="text-xs">
-                                      Sentido
-                                    </Label>
+                                    <Label className="text-xs my-1">Perfil</Label>
+                                    <Select
+                                      value={dayData.perfil}
+                                      onValueChange={(value) => {
+                                        updateDayData(dateStr, "perfil", value)
+                                        updateRestricoesOptionsForDay(dateStr, value)
+                                        // Clear selected restrictions when perfil changes
+                                        updateDayData(dateStr, "restricoes", [])
+                                      }}
+                                    >
+                                      <SelectTrigger id={`perfil-${dateStr}`} className="text-sm">
+                                        <SelectValue placeholder="Selecione" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {perfilOptions.length > 0 ? (
+                                          perfilOptions.map((perfil) => (
+                                            <SelectItem key={perfil} value={perfil}>
+                                              {perfil}
+                                            </SelectItem>
+                                          ))
+                                        ) : (
+                                          <SelectItem value="loading" disabled>
+                                            Carregando...
+                                          </SelectItem>
+                                        )}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div>
+                                    <Label className="text-xs mb-2 block">Restrições</Label>
+                                    {restricoesOptionsByDay[dateStr] && restricoesOptionsByDay[dateStr].length > 0 ? (
+                                      <div className="space-y-2 max-h-40 overflow-y-auto border rounded-md p-2">
+                                        {restricoesOptionsByDay[dateStr].map((restricao) => (
+                                          <div key={restricao} className="flex items-center space-x-2">
+                                            <Checkbox
+                                              id={`restricao-${dateStr}-${restricao}`}
+                                              checked={dayData.restricoes.includes(restricao)}
+                                              onCheckedChange={(checked) => {
+                                                const currentRestricoes = dayData.restricoes || []
+                                                const newRestricoes = checked
+                                                  ? [...currentRestricoes, restricao]
+                                                  : currentRestricoes.filter((r) => r !== restricao)
+                                                updateDayData(dateStr, "restricoes", newRestricoes)
+                                              }}
+                                            />
+                                            <Label
+                                              htmlFor={`restricao-${dateStr}-${restricao}`}
+                                              className="text-xs cursor-pointer"
+                                            >
+                                              {restricao}
+                                            </Label>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="text-xs text-muted-foreground italic">
+                                        {dayData.perfil
+                                          ? "Nenhuma restrição disponível"
+                                          : "Selecione um perfil primeiro"}
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  <div>
+                                    <Label className="text-xs my-1">Sentido</Label>
                                     <Select
                                       value={dayData.sentido}
-                                      onValueChange={(value) => updateDayData(dateStr, "sentido", value)}
+                                      onValueChange={(value) => {
+                                        updateDayData(dateStr, "sentido", value)
+                                      }}
                                     >
                                       <SelectTrigger id={`sentido-${dateStr}`} className="text-sm">
                                         <SelectValue placeholder="Selecione" />
@@ -1463,48 +3843,50 @@ export default function ServiceSchedulerApp() {
                                   </div>
 
                                   <div>
-                                    <Label htmlFor={`perfil-${dateStr}`} className="text-xs">
-                                      Perfil
-                                    </Label>
-                                    <Select
-                                      value={dayData.perfil}
-                                      onValueChange={(value) => updateDayData(dateStr, "perfil", value)}
-                                    >
-                                      <SelectTrigger id={`perfil-${dateStr}`} className="text-sm">
-                                        <SelectValue placeholder="Selecione" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="2x2">2 x 2</SelectItem>
-                                        <SelectItem value="2x3">2 x 3</SelectItem>
-                                        <SelectItem value="2x4">2 x 4</SelectItem>
-                                        <SelectItem value="1x1">1 x 1</SelectItem>
-                                        <SelectItem value="1x2">1 x 2</SelectItem>
-                                        <SelectItem value="garrafao">Garrafão de Portagem</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-
-                                  <div>
-                                    <Label htmlFor={`tipo-trabalho-day-${dateStr}`} className="text-xs">
+                                    <Label htmlFor={`tipo-trabalho-day-${dateStr}`} className="text-xs my-1">
                                       Tipo de trabalho
                                     </Label>
                                     <Select
                                       value={dayData.tipoTrabalhoDay}
-                                      onValueChange={(value) => updateDayData(dateStr, "tipoTrabalhoDay", value)}
+                                      onValueChange={(value) => {
+                                        updateDayData(dateStr, "tipoTrabalhoDay", value)
+                                        updateEsquemaOptionsForDay(dateStr, value)
+                                        setTimeout(() => {
+                                          const updatedDayData = { ...dayDataMap[dateStr], tipoTrabalhoDay: value }
+                                          validatePKDistance(dateStr, updatedDayData)
+
+                                          // If user selected Trabalhos Fixos, validate all other days too
+                                          if (value === "Trabalhos Fixos") {
+                                            setTimeout(() => {
+                                              validateAllDaysWithTrabalhosFix()
+                                            }, 200)
+                                          }
+                                        }, 100)
+                                      }}
                                     >
                                       <SelectTrigger id={`tipo-trabalho-day-${dateStr}`} className="text-sm">
                                         <SelectValue placeholder="Selecione" />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="opcao1">Opção 1 (a definir)</SelectItem>
-                                        <SelectItem value="opcao2">Opção 2 (a definir)</SelectItem>
-                                        <SelectItem value="opcao3">Opção 3 (a definir)</SelectItem>
+                                        {tipoTrabalhoPerDayOptions.length > 0 ? (
+                                          tipoTrabalhoPerDayOptions
+                                            .filter((tipo) => !disabledTipoTrabalhoByDay[dateStr]?.includes(tipo))
+                                            .map((tipo) => (
+                                              <SelectItem key={tipo} value={tipo}>
+                                                {tipo}
+                                              </SelectItem>
+                                            ))
+                                        ) : (
+                                          <SelectItem value="loading" disabled>
+                                            Carregando...
+                                          </SelectItem>
+                                        )}
                                       </SelectContent>
                                     </Select>
                                   </div>
 
                                   <div>
-                                    <Label htmlFor={`local-intervencao-${dateStr}`} className="text-xs">
+                                    <Label htmlFor={`local-intervencao-${dateStr}`} className="text-xs my-1">
                                       Local da intervenção
                                     </Label>
                                     <Select
@@ -1529,26 +3911,7 @@ export default function ServiceSchedulerApp() {
                                   </div>
 
                                   <div>
-                                    <Label htmlFor={`restricoes-${dateStr}`} className="text-xs">
-                                      Restrições
-                                    </Label>
-                                    <Select
-                                      value={dayData.restricoes}
-                                      onValueChange={(value) => updateDayData(dateStr, "restricoes", value)}
-                                    >
-                                      <SelectTrigger id={`restricoes-${dateStr}`} className="text-sm">
-                                        <SelectValue placeholder="Selecione" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="restricao1">Restrição 1 (a definir)</SelectItem>
-                                        <SelectItem value="restricao2">Restrição 2 (a definir)</SelectItem>
-                                        <SelectItem value="restricao3">Restrição 3 (a definir)</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-
-                                  <div>
-                                    <Label htmlFor={`esquema-${dateStr}`} className="text-xs">
+                                    <Label htmlFor={`esquema-${dateStr}`} className="text-xs my-1">
                                       Esquema
                                     </Label>
                                     <Select
@@ -1559,15 +3922,27 @@ export default function ServiceSchedulerApp() {
                                         <SelectValue placeholder="Selecione" />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="esquema1">Esquema 1 (a definir)</SelectItem>
-                                        <SelectItem value="esquema2">Esquema 2 (a definir)</SelectItem>
-                                        <SelectItem value="esquema3">Esquema 3 (a definir)</SelectItem>
+                                        {esquemaOptionsByDay[dateStr] && esquemaOptionsByDay[dateStr].length > 0 ? (
+                                          esquemaOptionsByDay[dateStr].map((esquema) => (
+                                            <SelectItem key={esquema} value={esquema}>
+                                              {esquema}
+                                            </SelectItem>
+                                          ))
+                                        ) : dayData.tipoTrabalhoDay ? (
+                                          <SelectItem value="none" disabled>
+                                            Nenhum esquema disponível
+                                          </SelectItem>
+                                        ) : (
+                                          <SelectItem value="select-tipo" disabled>
+                                            Selecione o tipo de trabalho primeiro
+                                          </SelectItem>
+                                        )}
                                       </SelectContent>
                                     </Select>
                                   </div>
 
                                   <div>
-                                    <Label htmlFor={`observacoes-${dateStr}`} className="text-xs">
+                                    <Label htmlFor={`observacoes-${dateStr}`} className="text-xs my-1">
                                       Observações
                                     </Label>
                                     <Textarea
@@ -1587,12 +3962,10 @@ export default function ServiceSchedulerApp() {
                       </div>
                     </div>
                   )}
-
-                  {/* Removed Pk inicial, Pk final, and Sentido fields from here */}
                 </div>
 
                 <div className="flex justify-end gap-2 mt-6">
-                  <Button size="sm" onClick={handleAdicionarAtividade} variant="outline">
+                  <Button className=" bg-transparent" size="sm" onClick={handleAdicionarAtividade} variant="outline">
                     <Plus className="w-4 h-4 mr-2" />
                     {editingAtividadeId ? "Atualizar Atividade" : "Adicionar Atividade"}
                   </Button>
@@ -1619,8 +3992,11 @@ export default function ServiceSchedulerApp() {
                   <Label className="text-base font-semibold text-foreground">Fiscalização</Label>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <Label htmlFor="fiscalizacao-nome">Nome</Label>
+                      <Label className="my-1.5" htmlFor="fiscalizacao-nome">
+                        Nome
+                      </Label>
                       <Input
+                        className="px-3.5"
                         id="fiscalizacao-nome"
                         type="text"
                         placeholder="Nome do responsável"
@@ -1629,7 +4005,9 @@ export default function ServiceSchedulerApp() {
                       />
                     </div>
                     <div>
-                      <Label htmlFor="fiscalizacao-contato">Contato</Label>
+                      <Label className="my-1.5" htmlFor="fiscalizacao-contato">
+                        Contato
+                      </Label>
                       <Input
                         id="fiscalizacao-contato"
                         type="tel"
@@ -1646,7 +4024,9 @@ export default function ServiceSchedulerApp() {
                   <Label className="text-base font-semibold text-foreground">Entidade Executante</Label>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <Label htmlFor="entidade-nome">Nome</Label>
+                      <Label className="my-1.5" htmlFor="entidade-nome">
+                        Nome
+                      </Label>
                       <Input
                         id="entidade-nome"
                         type="text"
@@ -1656,7 +4036,9 @@ export default function ServiceSchedulerApp() {
                       />
                     </div>
                     <div>
-                      <Label htmlFor="entidade-contato">Contato</Label>
+                      <Label className="my-1.5" htmlFor="entidade-contato">
+                        Contato
+                      </Label>
                       <Input
                         id="entidade-contato"
                         type="tel"
@@ -1673,7 +4055,9 @@ export default function ServiceSchedulerApp() {
                   <Label className="text-base font-semibold text-foreground">Sinalização</Label>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <Label htmlFor="sinalizacao-nome">Nome</Label>
+                      <Label className="my-1.5" htmlFor="sinalizacao-nome">
+                        Nome
+                      </Label>
                       <Input
                         id="sinalizacao-nome"
                         type="text"
@@ -1683,7 +4067,9 @@ export default function ServiceSchedulerApp() {
                       />
                     </div>
                     <div>
-                      <Label htmlFor="sinalizacao-contato">Contato</Label>
+                      <Label className="my-1.5" htmlFor="sinalizacao-contato">
+                        Contato
+                      </Label>
                       <Input
                         id="sinalizacao-contato"
                         type="tel"
@@ -1697,7 +4083,7 @@ export default function ServiceSchedulerApp() {
               </div>
 
               <div className="flex justify-end gap-2 mt-6">
-                <Button className="flex-1" onClick={handleSubmitOrUpdateVegetalPlan}>
+                <Button className=" flex-1" onClick={handleSubmitPlano}>
                   <CalendarDays className="w-4 h-4 mr-2" />
                   {editingPlanId ? "Atualizar Plano de Trabalho" : "Submeter Plano de Trabalho"}
                 </Button>
@@ -1734,12 +4120,16 @@ export default function ServiceSchedulerApp() {
                   <CardDescription>Revise e aprove ou rejeite os planos de trabalho submetidos.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {submittedPlans.filter((plan) => plan.status === "Pendente Confirmação").length === 0 ? (
-                    // Replace text-gray-500 with text-muted-foreground
+                  {submittedPlans.filter(
+                    (plan) => plan.status === "Pendente Aprovação" || plan.status === "Editado - Pendente Aprovação",
+                  ).length === 0 ? (
                     <p className="text-muted-foreground">Nenhum plano pendente de aprovação.</p>
                   ) : (
                     submittedPlans
-                      .filter((plan) => plan.status === "Pendente Confirmação")
+                      .filter(
+                        (plan) =>
+                          plan.status === "Pendente Aprovação" || plan.status === "Editado - Pendente Aprovação",
+                      )
                       .map((plan) => (
                         <div
                           key={plan.id}
@@ -1752,234 +4142,34 @@ export default function ServiceSchedulerApp() {
                             <p className="text-sm text-muted-foreground">
                               {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
                             </p>
-                            <Badge variant="outline">{plan.status}</Badge>
-                            <Dialog onOpenChange={(open) => !open && setSelectedPlanForDetails(null)}>
+                            <div className="flex gap-2">
+                              <Badge variant="outline">{plan.status}</Badge>
+                              {plan.isUrgente && (
+                                <Badge className="bg-red-500 hover:bg-red-600 text-white">Urgente</Badge>
+                              )}
+                            </div>
+
+                            <Dialog
+                              onOpenChange={(open) => {
+                                if (!open) {
+                                  setSelectedPlanForDetails(null)
+                                  setConfirmationDialog({ open: false, type: "approve", planId: "", planTitle: "" })
+                                }
+                              }}
+                            >
                               <DialogTrigger asChild>
                                 <Button variant="link" size="sm" onClick={() => setSelectedPlanForDetails(plan)}>
                                   Ver Detalhes
                                 </Button>
                               </DialogTrigger>
-                              {selectedPlanForDetails && (
-                                <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
-                                  <DialogHeader>
-                                    <DialogTitle>Detalhes do Plano: {selectedPlanForDetails.numero}</DialogTitle>
-                                    <DialogDescription>
-                                      Resumo completo do plano de trabalho submetido.
-                                    </DialogDescription>
-
-                                    {selectedPlanForDetails.comentarioGO && (
-                                      // Replace bg-red-50 and border-red-200 with destructive tokens
-                                      <div className="mt-4 p-3 bg-destructive/10 border border-destructive rounded-lg">
-                                        <Label className="text-sm font-semibold text-red-800 block mb-1">
-                                          Comentário do Gestor de Operações:
-                                        </Label>
-                                        <p className="text-sm text-red-700">{selectedPlanForDetails.comentarioGO}</p>
-                                      </div>
-                                    )}
-                                  </DialogHeader>
-
-                                  <div className="space-y-4 py-4 text-sm">
-                                    <div className="grid grid-cols-1 gap-4">
-                                      <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Tipo:</Label>
-                                        <span className="text-foreground">{selectedPlanForDetails.tipo}</span>
-                                      </div>
-
-                                      <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Sublanço:</Label>
-                                        <span className="text-foreground">
-                                          {selectedPlanForDetails.numero || "N/A"}
-                                        </span>
-                                      </div>
-
-                                      <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Tipo de Trabalho:</Label>
-                                        <span className="text-foreground">
-                                          {selectedPlanForDetails.tipoTrabalho || "N/A"}
-                                        </span>
-                                      </div>
-
-                                      <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Atividade:</Label>
-                                        <span className="text-foreground">
-                                          {selectedPlanForDetails.atividade || "N/A"}
-                                        </span>
-                                      </div>
-
-                                      {selectedPlanForDetails.kmInicial && (
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Km Inicial:</Label>
-                                          <span className="text-foreground">{selectedPlanForDetails.kmInicial}</span>
-                                        </div>
-                                      )}
-
-                                      {selectedPlanForDetails.kmFinal && (
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Km Final:</Label>
-                                          <span className="text-foreground">{selectedPlanForDetails.kmFinal}</span>
-                                        </div>
-                                      )}
-
-                                      {(selectedPlanForDetails.trabalhoFixo ||
-                                        selectedPlanForDetails.trabalhoMovel) && (
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Tipo de Trabalhos:</Label>
-                                          <span className="text-foreground">
-                                            {[
-                                              selectedPlanForDetails.trabalhoFixo && "Trabalhos Fixos",
-                                              selectedPlanForDetails.trabalhoMovel && "Trabalhos Móveis",
-                                            ]
-                                              .filter(Boolean)
-                                              .join(", ")}
-                                          </span>
-                                        </div>
-                                      )}
-
-                                      {selectedPlanForDetails.perigosTemporarios && (
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Perigos Temporários:</Label>
-                                          <span className="text-foreground">
-                                            {selectedPlanForDetails.perigosTemporarios
-                                              .toString()
-                                              .split("-")
-                                              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                                              .join(" ")}
-                                          </span>
-                                        </div>
-                                      )}
-
-                                      <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Status:</Label>
-                                        <Badge
-                                          className="w-fit"
-                                          variant={
-                                            selectedPlanForDetails.status === "Pendente Confirmação"
-                                              ? "outline"
-                                              : selectedPlanForDetails.status === "Confirmado"
-                                                ? "default"
-                                                : "destructive"
-                                          }
-                                        >
-                                          {selectedPlanForDetails.status}
-                                        </Badge>
-                                      </div>
-                                    </div>
-
-                                    {(selectedPlanForDetails.fiscalizacaoNome ||
-                                      selectedPlanForDetails.entidadeExecutanteNome ||
-                                      selectedPlanForDetails.sinalizacaoNome) && (
-                                      <div className="border-t pt-4">
-                                        <Label className="text-base font-semibold mb-3 block">Contactos</Label>
-                                        <div className="space-y-3">
-                                          {selectedPlanForDetails.fiscalizacaoNome && (
-                                            <div>
-                                              <Label className="font-semibold text-sm">Fiscalização:</Label>
-                                              <p className="text-foreground">
-                                                {selectedPlanForDetails.fiscalizacaoNome}
-                                                {selectedPlanForDetails.fiscalizacaoContato &&
-                                                  ` - ${selectedPlanForDetails.fiscalizacaoContato}`}
-                                              </p>
-                                            </div>
-                                          )}
-                                          {selectedPlanForDetails.entidadeExecutanteNome && (
-                                            <div>
-                                              <Label className="font-semibold text-sm">Entidade Executante:</Label>
-                                              <p className="text-foreground">
-                                                {selectedPlanForDetails.entidadeExecutanteNome}
-                                                {selectedPlanForDetails.entidadeExecutanteContato &&
-                                                  ` - ${selectedPlanForDetails.entidadeExecutanteContato}`}
-                                              </p>
-                                            </div>
-                                          )}
-                                          {selectedPlanForDetails.sinalizacaoNome && (
-                                            <div>
-                                              <Label className="font-semibold text-sm">Sinalização:</Label>
-                                              <p className="text-foreground">
-                                                {selectedPlanForDetails.sinalizacaoNome}
-                                                {selectedPlanForDetails.sinalizacaoContato &&
-                                                  ` - ${selectedPlanForDetails.sinalizacaoContato}`}
-                                              </p>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    <div className="border-t pt-4">
-                                      <h5 className="text-lg font-semibold mb-4">
-                                        Atividades ({selectedPlanForDetails.atividades.length}):
-                                      </h5>
-                                      {selectedPlanForDetails.atividades.length === 0 ? (
-                                        // Replace text-gray-500 with text-muted-foreground
-                                        <p className="text-muted-foreground">Nenhuma atividade adicionada.</p>
-                                      ) : (
-                                        <Accordion type="single" collapsible className="w-full">
-                                          {selectedPlanForDetails.atividades.map((atividade, index) => (
-                                            <AccordionItem key={atividade.id} value={atividade.id}>
-                                              <AccordionTrigger>
-                                                Atividade {index + 1}: {atividade.descricaoAtividade.substring(0, 50)}
-                                                {atividade.descricaoAtividade.length > 50 && "..."}
-                                              </AccordionTrigger>
-                                              <AccordionContent>
-                                                <div className="p-4 space-y-3 bg-muted rounded-lg">
-                                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                                                    <div>
-                                                      <Label className="font-semibold">Descrição:</Label>
-                                                      <p className="text-foreground">{atividade.descricaoAtividade}</p>
-                                                    </div>
-                                                    <div>
-                                                      <Label className="font-semibold">Período:</Label>
-                                                      <p className="text-foreground">
-                                                        {atividade.periodo.from && atividade.periodo.to
-                                                          ? `${format(atividade.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(atividade.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
-                                                          : "N/A"}
-                                                      </p>
-                                                    </div>
-                                                    {atividade.pkInicialKm && (
-                                                      <div>
-                                                        <Label className="font-semibold">Pk Inicial:</Label>
-                                                        <p className="text-foreground">{`${atividade.pkInicialKm}km ${atividade.pkInicialMeters}m`}</p>
-                                                      </div>
-                                                    )}
-                                                    {atividade.pkFinalKm && (
-                                                      <div>
-                                                        <Label className="font-semibold">Pk Final:</Label>
-                                                        <p className="text-foreground">{`${atividade.pkFinalKm}km ${atividade.pkFinalMeters}m`}</p>
-                                                      </div>
-                                                    )}
-                                                    {atividade.sentido && (
-                                                      <div>
-                                                        <Label className="font-semibold">Sentido:</Label>
-                                                        <p className="text-foreground capitalize">
-                                                          {atividade.sentido}
-                                                        </p>
-                                                      </div>
-                                                    )}
-                                                    {atividade.perfil && (
-                                                      <div>
-                                                        <Label className="font-semibold">Perfil:</Label>
-                                                        <p className="text-foreground">{atividade.perfil}</p>
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                </div>
-                                              </AccordionContent>
-                                            </AccordionItem>
-                                          ))}
-                                        </Accordion>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <DialogFooter>
-                                    <Button onClick={() => setSelectedPlanForDetails(null)}>Fechar</Button>
-                                  </DialogFooter>
-                                </DialogContent>
-                              )}
+                              <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
+                                {selectedPlanForDetails && (
+                                  <DialogContentWithChangedValues plan={selectedPlanForDetails} />
+                                )}
+                              </DialogContent>
                             </Dialog>
                           </div>
                           <div className="flex gap-2 mt-3 sm:mt-0">
-                            {/* Keep green colors for action buttons as they are semantic */}
                             <Button
                               onClick={() =>
                                 openConfirmationDialog(
@@ -2004,6 +4194,21 @@ export default function ServiceSchedulerApp() {
                             >
                               Rejeitar
                             </Button>
+                            {plan.status === "Confirmado" && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  openRemovalDialog(
+                                    plan.id,
+                                    `${plan.autoEstrada || "..."} - ${plan.numero || "..."} - ${plan.tipoTrabalho || "..."}`,
+                                  )
+                                }
+                                className="flex items-center gap-1 text-orange-600 hover:text-orange-700 border-orange-300 hover:border-orange-400"
+                              >
+                                Remover Aprovação
+                              </Button>
+                            )}
                           </div>
                         </div>
                       ))
@@ -2048,7 +4253,8 @@ export default function ServiceSchedulerApp() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">Todos</SelectItem>
-                          <SelectItem value="Pendente Confirmação">Pendente Confirmação</SelectItem>
+                          <SelectItem value="Pendente Aprovação">Pendente Aprovação</SelectItem>
+                          <SelectItem value="Editado - Pendente Aprovação">Editado - Pendente Aprovação</SelectItem>
                           <SelectItem value="Confirmado">Confirmado</SelectItem>
                           <SelectItem value="Rejeitado">Rejeitado</SelectItem>
                         </SelectContent>
@@ -2081,7 +4287,6 @@ export default function ServiceSchedulerApp() {
                   <div className="grid grid-cols-7 gap-2">
                     {/* Day headers */}
                     {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((day) => (
-                      // Replace text-gray-600 with text-muted-foreground
                       <div key={day} className="text-center font-semibold text-sm text-muted-foreground py-2">
                         {day}
                       </div>
@@ -2090,7 +4295,7 @@ export default function ServiceSchedulerApp() {
                     {/* Calendar days */}
                     {eachDayOfInterval({
                       start: startOfWeek(startOfMonth(currentCalendarMonth), { locale: ptBR }),
-                      end: endOfMonth(currentCalendarMonth),
+                      end: endOfWeek(endOfMonth(currentCalendarMonth), { locale: ptBR }),
                     }).map((day, index) => {
                       const plansForDay = getPlansForDate(day).filter((plan) => {
                         if (calendarFilterPeriod === "all") return true
@@ -2101,21 +4306,28 @@ export default function ServiceSchedulerApp() {
                       return (
                         <div
                           key={index}
-                          // Replace bg-white and bg-gray-50 with semantic tokens
                           className={`min-h-[120px] border rounded-lg p-2 ${isCurrentMonth ? "bg-card" : "bg-muted"}`}
                         >
                           <div
-                            // Replace text-gray-900 and text-gray-400 with semantic tokens
                             className={`text-sm font-medium mb-2 ${isCurrentMonth ? "text-foreground" : "text-muted-foreground"}`}
                           >
                             {format(day, "d")}
                           </div>
                           <div className="space-y-1">
                             {plansForDay.slice(0, 2).map((plan) => (
-                              <Dialog key={plan.id}>
+                              <Dialog
+                                key={plan.id}
+                                onOpenChange={(open) => {
+                                  if (!open) {
+                                    setSelectedPlanForDetails(null)
+                                    setConfirmationDialog({ open: false, type: "approve", planId: "", planTitle: "" })
+                                  }
+                                }}
+                              >
                                 <DialogTrigger asChild>
                                   <div
                                     className={`text-xs p-2 rounded border cursor-pointer hover:shadow-md transition-shadow ${getStatusColor(plan.status)}`}
+                                    onClick={() => setSelectedPlanForDetails(plan)}
                                   >
                                     <div className="font-semibold truncate">
                                       {plan.autoEstrada || "..."} - {plan.numero || "..."}
@@ -2124,158 +4336,9 @@ export default function ServiceSchedulerApp() {
                                   </div>
                                 </DialogTrigger>
                                 <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
-                                  <DialogHeader>
-                                    <DialogTitle>
-                                      {plan.autoEstrada || "..."} - {plan.numero || "..."} -{" "}
-                                      {plan.tipoTrabalho || "..."}
-                                    </DialogTitle>
-                                    <DialogDescription>Detalhes do plano de trabalho</DialogDescription>
-                                  </DialogHeader>
-
-                                  <div className="space-y-4 py-4 text-sm">
-                                    <div className="grid grid-cols-1 gap-4">
-                                      <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Status:</Label>
-                                        <Badge
-                                          className="w-fit"
-                                          variant={
-                                            plan.status === "Pendente Confirmação"
-                                              ? "outline"
-                                              : plan.status === "Confirmado"
-                                                ? "default"
-                                                : "destructive"
-                                          }
-                                        >
-                                          {plan.status}
-                                        </Badge>
-                                      </div>
-
-                                      <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Tipo:</Label>
-                                        <span className="text-foreground">{plan.tipo}</span>
-                                      </div>
-
-                                      <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Sublanço:</Label>
-                                        <span className="text-foreground">{plan.numero || "N/A"}</span>
-                                      </div>
-
-                                      <div className="flex flex-col space-y-2">
-                                        <Label className="font-semibold">Atividade:</Label>
-                                        <span className="text-foreground">{plan.atividade || "N/A"}</span>
-                                      </div>
-
-                                      {plan.kmInicial && (
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Km Inicial:</Label>
-                                          <span className="text-foreground">{plan.kmInicial}</span>
-                                        </div>
-                                      )}
-
-                                      {plan.kmFinal && (
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Km Final:</Label>
-                                          <span className="text-foreground">{plan.kmFinal}</span>
-                                        </div>
-                                      )}
-
-                                      {(plan.trabalhoFixo || plan.trabalhoMovel) && (
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Tipo de Trabalhos:</Label>
-                                          <span className="text-foreground">
-                                            {[
-                                              plan.trabalhoFixo && "Trabalhos Fixos",
-                                              plan.trabalhoMovel && "Trabalhos Móveis",
-                                            ]
-                                              .filter(Boolean)
-                                              .join(", ")}
-                                          </span>
-                                        </div>
-                                      )}
-
-                                      {plan.perigosTemporarios && (
-                                        <div className="flex flex-col space-y-2">
-                                          <Label className="font-semibold">Perigos Temporários:</Label>
-                                          <span className="text-foreground">
-                                            {plan.perigosTemporarios
-                                              .toString()
-                                              .split("-")
-                                              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                                              .join(" ")}
-                                          </span>
-                                        </div>
-                                      )}
-                                    </div>
-
-                                    <div className="border-t pt-4">
-                                      <h5 className="text-lg font-semibold mb-4">
-                                        Atividades ({plan.atividades.length}):
-                                      </h5>
-                                      {plan.atividades.length === 0 ? (
-                                        // Replace text-gray-500 with text-muted-foreground
-                                        <p className="text-muted-foreground">Nenhuma atividade adicionada.</p>
-                                      ) : (
-                                        <Accordion type="single" collapsible className="w-full">
-                                          {plan.atividades.map((atividade, index) => (
-                                            <AccordionItem key={atividade.id} value={atividade.id}>
-                                              <AccordionTrigger>
-                                                Atividade {index + 1}: {atividade.descricaoAtividade.substring(0, 50)}
-                                                {atividade.descricaoAtividade.length > 50 && "..."}
-                                              </AccordionTrigger>
-                                              <AccordionContent>
-                                                <div className="p-4 space-y-3 bg-muted rounded-lg">
-                                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                                                    <div>
-                                                      <Label className="font-semibold">Descrição:</Label>
-                                                      <p className="text-foreground">{atividade.descricaoAtividade}</p>
-                                                    </div>
-                                                    <div>
-                                                      <Label className="font-semibold">Período:</Label>
-                                                      <p className="text-foreground">
-                                                        {atividade.periodo.from && atividade.periodo.to
-                                                          ? `${format(atividade.periodo.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(atividade.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
-                                                          : "N/A"}
-                                                      </p>
-                                                    </div>
-                                                    {atividade.pkInicialKm && (
-                                                      <div>
-                                                        <Label className="font-semibold">Pk Inicial:</Label>
-                                                        <p className="text-foreground">{`${atividade.pkInicialKm}km ${atividade.pkInicialMeters}m`}</p>
-                                                      </div>
-                                                    )}
-                                                    {atividade.pkFinalKm && (
-                                                      <div>
-                                                        <Label className="font-semibold">Pk Final:</Label>
-                                                        <p className="text-foreground">{`${atividade.pkFinalKm}km ${atividade.pkFinalMeters}m`}</p>
-                                                      </div>
-                                                    )}
-                                                    {atividade.sentido && (
-                                                      <div>
-                                                        <Label className="font-semibold">Sentido:</Label>
-                                                        <p className="text-foreground capitalize">
-                                                          {atividade.sentido}
-                                                        </p>
-                                                      </div>
-                                                    )}
-                                                    {atividade.perfil && (
-                                                      <div>
-                                                        <Label className="font-semibold">Perfil:</Label>
-                                                        <p className="text-foreground">{atividade.perfil}</p>
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                </div>
-                                              </AccordionContent>
-                                            </AccordionItem>
-                                          ))}
-                                        </Accordion>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <DialogFooter>
-                                    <Button variant="outline">Fechar</Button>
-                                  </DialogFooter>
+                                  {selectedPlanForDetails && (
+                                    <DialogContentWithChangedValues plan={selectedPlanForDetails} />
+                                  )}
                                 </DialogContent>
                               </Dialog>
                             ))}
@@ -2298,7 +4361,7 @@ export default function ServiceSchedulerApp() {
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-4 rounded bg-yellow-100 border border-yellow-300"></div>
-                      <span className="text-sm text-muted-foreground">Pendente Confirmação</span>
+                      <span className="text-sm text-muted-foreground">Pendente Aprovação</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-4 rounded bg-red-100 border border-red-300"></div>
@@ -2309,6 +4372,70 @@ export default function ServiceSchedulerApp() {
               </Card>
             </TabsContent>
           </Tabs>
+        )}
+
+        {userRole === "cco" && (
+          <div className="mt-8 space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                  <span>Planos de Trabalho Aprovados por Semana</span>
+                </CardTitle>
+                <p className="text-sm text-muted-foreground mt-2">Clique numa semana para ver os planos aprovados</p>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {Object.keys(weeklyPlanCounts).length === 0 ? (
+                    <p className="text-muted-foreground text-center py-8 col-span-full">
+                      Nenhum plano aprovado encontrado.
+                    </p>
+                  ) : (
+                    Object.entries(weeklyPlanCounts)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([weekId, count]) => {
+                        const [yearStr, , weekNumStr] = weekId.split("-")
+                        const year = Number.parseInt(yearStr)
+                        const weekNum = Number.parseInt(weekNumStr)
+                        const startDate = startOfWeek(new Date(year, 0, (weekNum - 1) * 7 + 1), {
+                          locale: ptBR,
+                          weekStartsOn: 1,
+                        })
+                        const endDate = new Date(startDate)
+                        endDate.setDate(startDate.getDate() + 6)
+
+                        return (
+                          <Card
+                            key={weekId}
+                            className="cursor-pointer hover:shadow-lg transition-shadow border-2 hover:border-primary"
+                            onClick={() => handleViewWeeklyPlans(weekId)}
+                          >
+                            <CardHeader className="pb-3">
+                              <CardTitle className="text-base flex items-center justify-between">
+                                <span>Semana {weekNum}</span>
+                                <Badge variant="secondary" className="text-lg font-bold">
+                                  {count}
+                                </Badge>
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="text-sm text-muted-foreground">
+                                <CalendarDays className="w-4 h-4 inline mr-1" />
+                                {format(startDate, "dd/MM", { locale: ptBR })} -{" "}
+                                {format(endDate, "dd/MM/yyyy", { locale: ptBR })}
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-2">
+                                {count} {count === 1 ? "plano aprovado" : "planos aprovados"}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        )
+                      })
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {userRole !== "cco" && userRole !== "admin" && (
@@ -2322,7 +4449,6 @@ export default function ServiceSchedulerApp() {
             <CardContent>
               <div className="space-y-4">
                 {submittedPlans.length === 0 ? (
-                  // Replace text-gray-500 with text-muted-foreground
                   <p className="text-muted-foreground">Nenhum agendamento submetido ainda.</p>
                 ) : (
                   submittedPlans.map((plan) => (
@@ -2347,17 +4473,56 @@ export default function ServiceSchedulerApp() {
                           )}
                         </div>
                       </div>
-                      <Badge
-                        variant={
-                          plan.status === "Pendente Confirmação"
-                            ? "outline"
-                            : plan.status === "Confirmado"
-                              ? "default"
-                              : "destructive"
-                        }
-                      >
-                        {plan.status}
-                      </Badge>
+
+                      <div className="flex items-center gap-2">
+                        {(plan.status === "Pendente Aprovação" ||
+                          plan.status === "Editado - Pendente Aprovação" ||
+                          plan.status === "Confirmado" ||
+                          plan.status === "Rejeitado") && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleEditPlan(plan)}
+                            className="flex items-center gap-1"
+                          >
+                            <Edit className="w-4 h-4" />
+                            Editar
+                          </Button>
+                        )}
+                        {plan.status === "Confirmado" && userRole === "go" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              openRemovalDialog(
+                                plan.id,
+                                `${plan.autoEstrada || "..."} - ${plan.numero || "..."} - ${plan.tipoTrabalho || "..."}`,
+                              )
+                            }
+                            className="flex items-center gap-1 text-orange-600 hover:text-orange-700 border-orange-300 hover:border-orange-400"
+                          >
+                            Remover Aprovação
+                          </Button>
+                        )}
+                        <Badge
+                          variant={
+                            plan.status === "Pendente Aprovação" || plan.status === "Editado - Pendente Aprovação"
+                              ? "outline"
+                              : plan.status === "Confirmado"
+                                ? "default"
+                                : "destructive"
+                          }
+                          className={
+                            plan.status === "Confirmado"
+                              ? "h-9 text-base font-semibold bg-green-600 hover:bg-green-600 px-4 flex items-center"
+                              : plan.status === "Editado - Pendente Aprovação"
+                                ? "h-9 text-base font-semibold bg-orange-600 text-white hover:bg-orange-600 px-4 flex items-center"
+                                : "h-9 text-base font-semibold px-4 flex items-center"
+                          }
+                        >
+                          {getStatusDisplayText(plan.status)}
+                        </Badge>
+                      </div>
                     </div>
                   ))
                 )}
@@ -2404,15 +4569,14 @@ export default function ServiceSchedulerApp() {
               </Label>
               <Textarea
                 id="rejection-comment"
-                placeholder="Adicione comentários sobre a rejeição..."
-                value={rejectionComment}
-                onChange={(e) => setRejectionComment(e.target.value)}
+                placeholder="Motivo da rejeição..."
+                value={rejectionDialog.comment}
+                onChange={(e) => setRejectionDialog({ ...rejectionDialog, comment: e.target.value })}
                 rows={3}
                 className="mt-2"
               />
             </div>
           )}
-
           <DialogFooter>
             <Button
               variant="outline"
@@ -2434,53 +4598,80 @@ export default function ServiceSchedulerApp() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isWeeklyPlansDialogOpen} onOpenChange={setIsWeeklyPlansDialogOpen}>
-        <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-y-auto">
+      <Dialog open={removalDialog.open} onOpenChange={(open) => setRemovalDialog({ ...removalDialog, open })}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>{currentWeekTitle}</DialogTitle>
-            <DialogDescription>Lista de planos aprovados para a semana selecionada.</DialogDescription>
+            <DialogTitle>Remover Aprovação</DialogTitle>
+            <DialogDescription>
+              Quer remover a aprovação para o plano de trabalho "{removalDialog.planTitle}"?
+            </DialogDescription>
           </DialogHeader>
-          <div className="py-4 space-y-4">
-            {currentWeekPlans.length === 0 ? (
-              // Replace text-gray-500 with text-muted-foreground
-              <p className="text-muted-foreground">Nenhum plano aprovado para esta semana.</p>
-            ) : (
-              currentWeekPlans.map((plan) => (
-                <div key={plan.id} className="flex items-center justify-between p-4 border rounded-lg">
-                  <div className="flex items-center space-x-4">
-                    <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                      {plan.tipo === "Manutenção Vegetal" && <Leaf className="w-5 h-5 text-green-600" />}
-                      {plan.tipo === "Beneficiação de Pavimento" && <Road className="w-5 h-5 text-gray-600" />}
-                      {plan.tipo === "Manutenção Geral" && <Wrench className="w-5 h-5 text-blue-600" />}
-                    </div>
-                    <div>
-                      <h4 className="font-medium">
-                        {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
-                      </h4>
-                      <p className="text-sm text-muted-foreground">
-                        {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="default">{plan.status}</Badge>
-                    <Button
-                      variant={plan.isInISistema ? "default" : "destructive"}
-                      className={plan.isInISistema ? "bg-green-500 hover:bg-green-600" : "bg-red-500 hover:bg-red-600"}
-                      onClick={() => handleToggleISistemaStatus(plan.id)}
-                    >
-                      {plan.isInISistema ? "Inserido em iSistema" : "Não inserido em iSistema"}
-                    </Button>
-                  </div>
-                </div>
-              ))
-            )}
+
+          <div className="py-4">
+            <Label htmlFor="removal-reason" className="text-sm font-medium">
+              Motivo (Comentário Interno):
+            </Label>
+            <Textarea
+              id="removal-reason"
+              placeholder="Descreva brevemente o motivo da remoção..."
+              value={removalReason}
+              onChange={(e) => setRemovalReason(e.target.value)}
+              rows={3}
+              className="mt-2"
+            />
           </div>
+
           <DialogFooter>
-            <Button onClick={() => setIsWeeklyPlansDialogOpen(false)}>Fechar</Button>
+            <Button variant="outline" onClick={() => setRemovalDialog({ open: false, planId: "", planTitle: "" })}>
+              Cancelar
+            </Button>
+            <Button onClick={confirmRemovalApproval} className="bg-orange-500 hover:bg-orange-600">
+              Remover Aprovação
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={pkValidationError.show} onOpenChange={(open) => !open && handlePkValidationErrorClose()}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Erro de Validação</AlertDialogTitle>
+            <AlertDialogDescription>
+              A restrição não pode ser superior a 3,5 kms.
+              <br />
+              <br />
+              Distância atual: <strong>{pkValidationError.distance.toFixed(3)} km</strong>
+              <br />
+              <br />A opção "Trabalhos Fixos" será desabilitada para este dia.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={handlePkValidationErrorClose}>OK</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pkConflictDialog.open}
+        onOpenChange={(open) => setPkConflictDialog({ ...pkConflictDialog, open })}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertCircle className="h-5 w-5" />
+              Conflito de Localização
+            </AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-line text-left">
+              {pkConflictDialog.conflictDetails}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setPkConflictDialog({ open: false, conflictDetails: "" })}>
+              OK
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
