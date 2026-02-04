@@ -3,7 +3,7 @@
 import type React from "react"
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -24,6 +24,10 @@ import {
   CheckCircle2,
   Copy,
   AlertCircle,
+  Eye,
+  X,
+  FileText,
+  Info,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
@@ -73,6 +77,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert" // Import Alert component
 
 // Tipagem para o intervalo de datas
 interface DateRange {
@@ -97,6 +102,7 @@ interface DayData {
   esquema: string
   observacoes: string
   sublanco: string // Calculated sublanco result
+  autoEstrada?: string // Added for CCO view
 }
 
 // Tipagem para uma atividade
@@ -118,6 +124,11 @@ interface Atividade {
   observacoes: string
   detalhesDiarios: { [dateString: string]: DailyDetail }
   dayDataMap?: { [dateString: string]: DayData } // Added to store day data when activity is created/edited
+  sublanco?: string // Added sublanco to Atividade
+  // New fields for work characteristics
+  trabalhoFixo?: boolean
+  trabalhoMovel?: boolean
+  perigosTemporarios?: boolean
 }
 
 // Tipagem para os detalhes diários
@@ -134,26 +145,36 @@ interface DailyDetail {
   responsavelNome: string
   responsavelContacto: string
   observacoes: string
+  autoEstrada?: string // Added for CCO view
+  sublanco?: string // Added for CCO view
 }
 
 interface SubmittedPlan {
   id: string
   numero: string
-  tipoTrabalho?: string // Added tipoTrabalho field
-  atividade?: string // Added atividade field
+  tipoTrabalho?: string
+  atividade?: string
   autoEstrada?: string // Added autoEstrada to SubmittedPlan interface
   concessao?: string // Added concessao field
   atividades: Atividade[]
-  status: "Pendente Aprovação" | "Confirmado" | "Rejeitado" | "Editado - Pendente Aprovação"
+  status:
+    | "Pendente Aprovação"
+    | "Confirmado"
+    | "Rejeitado"
+    | "Editado - Pendente Aprovação"
+    | "Aprovado"
+    | "Pendente Aprovação GDC"
+    | "Editado - Pendente Aprovação GDC"
   tipo: "Manutenção Vegetal" | "Beneficiação de Pavimento" | "Manutenção Geral"
   isInISistema: boolean
   isUrgente?: boolean
   comentarioGO?: string
+  comentarioGDC?: string
   kmInicial?: string
   kmFinal?: string
-  trabalhoFixo: boolean
-  trabalhoMovel: boolean
-  perigosTemporarios: boolean
+  trabalhoFixo: boolean // Added to SubmittedPlan
+  trabalhoMovel: boolean // Added to SubmittedPlan
+  perigosTemporarios: boolean // Added to SubmittedPlan
   fiscalizacaoNome?: string
   fiscalizacaoContato?: string
   entidadeExecutanteNome?: string
@@ -161,6 +182,17 @@ interface SubmittedPlan {
   sinalizacaoNome?: string
   sinalizacaoContato?: string
   originalValues?: Partial<SubmittedPlan> // Store original values before editing
+  // Added for CCO view
+  prestador?: string
+  submittedAt?: string
+  // Fields for CCO weekly dialog
+  week?: string
+  startDate?: string
+  endDate?: string
+  nomeEmpresa?: string
+  dataCriacao?: string
+  editedBy?: string // Track who edited the plan (GDC or GO email)
+  editedAt?: string // Track when it was edited
 }
 
 function calculateEaster(year: number): Date {
@@ -375,13 +407,13 @@ const TIPO_TRABALHO_TO_ATIVIDADES: Record<string, string[]> = {
   Outros: ["Outros Trabalhos"],
 }
 
-export default function ServiceSchedulerApp() {
+function ServiceSchedulerApp() {
   const { toast } = useToast() // Initialize toast hook
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [loginData, setLoginData] = useState({ email: "", password: "" })
   const [user, setUser] = useState({ name: "", email: "" })
-  const [userRole, setUserRole] = useState<"prestador" | "go" | "cco" | "admin" | null>(null)
-  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined) // Used DayPickerDateRange here
+  const [userRole, setUserRole] = useState<"prestador" | "go" | "cco" | "admin" | "gestordecontrato" | null>(null)
+  const [dateRange, setDateRange] = useState<DayPickerDateRange | undefined>(undefined) // Used DayPickerDateRange here
   const [dailyDetails, setDailyDetails] = useState<{ [dateString: string]: DailyDetail }>({})
   const [isUrgente, setIsUrgente] = useState(false) // Changed from isUrgente to setIsUrgente for consistency with other setters
 
@@ -480,7 +512,17 @@ export default function ServiceSchedulerApp() {
   const [rejectionComment, setRejectionComment] = useState("")
   const [weeklyPlanCounts, setWeeklyPlanCounts] = useState<{ [weekId: string]: number }>({})
   const [isWeeklyPlansDialogOpen, setIsWeeklyPlansDialogOpen] = useState(false)
-  const [currentWeekPlans, setCurrentWeekPlans] = useState<SubmittedPlan[]>([])
+  const [currentWeekPlans, setCurrentWeekPlans] = useState<{
+    plans: SubmittedPlan[]
+    week: string
+    startDate: string
+    endDate: string
+  }>({
+    plans: [],
+    week: "",
+    startDate: "",
+    endDate: "",
+  })
   const [currentWeekTitle, setCurrentWeekTitle] = useState("")
 
   // New calendar view states
@@ -519,6 +561,17 @@ export default function ServiceSchedulerApp() {
     conflictDetails: "",
   })
 
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+
+  // Adding notification state for edited plans
+  const [editNotifications, setEditNotifications] = useState<
+    {
+      planId: string
+      planTitle: string
+      editedBy: string
+    }[]
+  >([])
+
   const groupConsecutiveActivities = (activities: Atividade[]) => {
     if (activities.length === 0) return []
 
@@ -543,7 +596,10 @@ export default function ServiceSchedulerApp() {
         act1.sentido === act2.sentido &&
         act1.tipoTrabalho === act2.tipoTrabalho &&
         act1.localIntervencao === act2.localIntervencao &&
-        act1.esquema === act2.esquema
+        act1.esquema === act2.esquema &&
+        act1.trabalhoFixo === act2.trabalhoFixo && // Check work characteristics
+        act1.trabalhoMovel === act2.trabalhoMovel &&
+        act1.perigosTemporarios === act2.perigosTemporarios
 
       return result
     }
@@ -591,29 +647,47 @@ export default function ServiceSchedulerApp() {
   }
 
   const ChangedValue = ({
-    oldValue,
     newValue,
-    label,
-    hasChange,
+    oldValue,
+    hasOriginalValues = true,
   }: {
-    oldValue: string
-    newValue: string
-    label: string
-    hasChange?: boolean
+    newValue: string | number | undefined | string[]
+    oldValue: string | number | undefined | string[]
+    hasOriginalValues?: boolean
   }) => {
-    const hasChangeCondition = hasChange && oldValue !== newValue && oldValue !== ""
+    console.log("[v0] ChangedValue:", { newValue, oldValue, hasOriginalValues })
 
-    if (!hasChangeCondition) {
-      return <span>{newValue || "N/A"}</span>
+    // Convert string arrays to comma-separated strings for comparison
+    const stringifyArray = (value: any): string => {
+      if (Array.isArray(value)) {
+        return value.join(", ") || "N/A"
+      }
+      return value || "N/A"
     }
 
-    return (
-      <span>
-        <span className="line-through text-muted-foreground">{oldValue}</span>
-        <span className="mx-2 text-orange-500">→</span>
-        <span className="text-orange-500 font-semibold">{newValue}</span>
-      </span>
-    )
+    const formattedNewValue = stringifyArray(newValue)
+    const formattedOldValue = stringifyArray(oldValue)
+
+    // If there are no original values at all, just show the current value
+    if (!hasOriginalValues || oldValue === undefined || oldValue === null || formattedOldValue === "N/A") {
+      return <span>{formattedNewValue}</span>
+    }
+
+    // Check if value actually changed
+    const hasChanged = formattedOldValue !== formattedNewValue
+
+    if (hasChanged) {
+      return (
+        <span>
+          <span className="text-red-600 font-medium">{formattedOldValue}</span>
+          <span className="mx-2">→</span>
+          <span className="text-green-600 font-medium">{formattedNewValue}</span>
+        </span>
+      )
+    }
+
+    // No change, just show the value
+    return <span>{formattedNewValue}</span>
   }
 
   const ActivityWithChanges = ({
@@ -782,7 +856,8 @@ export default function ServiceSchedulerApp() {
                   newValue={
                     activity.periodo.from ? format(activity.periodo.from, "dd/MM/yyyy", { locale: ptBR }) : "N/A"
                   }
-                  hasChange={hasChanges}
+                  label="Data"
+                  hasOriginalValues={!!originalActivity}
                 />
                 {activity.periodo.to && activity.periodo.to.getTime() !== activity.periodo.from?.getTime() && (
                   <>
@@ -796,7 +871,8 @@ export default function ServiceSchedulerApp() {
                       newValue={
                         activity.periodo.to ? format(activity.periodo.to, "dd/MM/yyyy", { locale: ptBR }) : "N/A"
                       }
-                      hasChange={hasChanges}
+                      label="Data Final"
+                      hasOriginalValues={!!originalActivity}
                     />
                   </>
                 )}
@@ -810,12 +886,13 @@ export default function ServiceSchedulerApp() {
                 <span className="font-medium">Pk Inicial:</span>{" "}
                 {originalActivity ? (
                   <ChangedValue
-                    oldValue={`${originalActivity.pkInicialKm} Km + ${originalActivity.pkInicialMeters} m`}
-                    newValue={`${activity.pkInicialKm} Km + ${activity.pkInicialMeters} m`}
-                    hasChange={hasChanges}
+                    oldValue={`${originalActivity.pkInicialKm || 0} Km + ${originalActivity.pkInicialMeters || 0} m`}
+                    newValue={`${activity.pkInicialKm || 0} Km + ${activity.pkInicialMeters || 0} m`}
+                    label="Pk Inicial"
+                    hasOriginalValues={!!originalActivity}
                   />
                 ) : (
-                  `${activity.pkInicialKm} Km + ${activity.pkInicialMeters} m`
+                  `${activity.pkInicialKm || 0} Km + ${activity.pkInicialMeters || 0} m`
                 )}
               </div>
 
@@ -823,21 +900,27 @@ export default function ServiceSchedulerApp() {
                 <span className="font-medium">Pk Final:</span>{" "}
                 {originalActivity ? (
                   <ChangedValue
-                    oldValue={`${originalActivity.pkFinalKm} Km + ${originalActivity.pkFinalMeters} m`}
-                    newValue={`${activity.pkFinalKm} Km + ${activity.pkFinalMeters} m`}
-                    hasChange={hasChanges}
+                    oldValue={`${originalActivity.pkFinalKm || 0} Km + ${originalActivity.pkFinalMeters || 0} m`}
+                    newValue={`${activity.pkFinalKm || 0} Km + ${activity.pkFinalMeters || 0} m`}
+                    label="Pk Final"
+                    hasOriginalValues={!!originalActivity}
                   />
                 ) : (
-                  `${activity.pkFinalKm} Km + ${activity.pkFinalMeters} m`
+                  `${activity.pkFinalKm || 0} Km + ${activity.pkFinalMeters || 0} m`
                 )}
               </div>
 
               <div>
                 <span className="font-medium">Perfil:</span>{" "}
                 {originalActivity ? (
-                  <ChangedValue oldValue={originalActivity.perfil} newValue={activity.perfil} hasChange={hasChanges} />
+                  <ChangedValue
+                    oldValue={originalActivity.perfil || "N/A"}
+                    newValue={activity.perfil || "N/A"}
+                    label="Perfil"
+                    hasOriginalValues={!!originalActivity}
+                  />
                 ) : (
-                  activity.perfil
+                  activity.perfil || "N/A"
                 )}
               </div>
 
@@ -845,12 +928,13 @@ export default function ServiceSchedulerApp() {
                 <span className="font-medium">Restrições:</span>{" "}
                 {originalActivity ? (
                   <ChangedValue
-                    oldValue={originalActivity.restricoes.join(", ")}
-                    newValue={activity.restricoes.join(", ")}
-                    hasChange={hasChanges}
+                    oldValue={originalActivity.restricoes || "N/A"}
+                    newValue={activity.restricoes || "N/A"}
+                    label="Restrições"
+                    hasOriginalValues={!!originalActivity}
                   />
                 ) : (
-                  activity.restricoes.join(", ")
+                  activity.restricoes || "N/A"
                 )}
               </div>
 
@@ -858,25 +942,13 @@ export default function ServiceSchedulerApp() {
                 <span className="font-medium">Sentido:</span>{" "}
                 {originalActivity ? (
                   <ChangedValue
-                    oldValue={originalActivity.sentido}
-                    newValue={activity.sentido}
-                    hasChange={hasChanges}
+                    oldValue={originalActivity.sentido || "N/A"}
+                    newValue={activity.sentido || "N/A"}
+                    label="Sentido"
+                    hasOriginalValues={!!originalActivity}
                   />
                 ) : (
-                  activity.sentido
-                )}
-              </div>
-
-              <div>
-                <span className="font-medium">Tipo de trabalho:</span>{" "}
-                {originalActivity ? (
-                  <ChangedValue
-                    oldValue={originalActivity.tipoTrabalho}
-                    newValue={activity.tipoTrabalho}
-                    hasChange={hasChanges}
-                  />
-                ) : (
-                  activity.tipoTrabalho
+                  activity.sentido || "N/A"
                 )}
               </div>
 
@@ -884,25 +956,26 @@ export default function ServiceSchedulerApp() {
                 <span className="font-medium">Local da intervenção:</span>{" "}
                 {originalActivity ? (
                   <ChangedValue
-                    oldValue={originalActivity.localIntervencao}
-                    newValue={activity.localIntervencao}
-                    hasChange={hasChanges}
+                    oldValue={originalActivity.localIntervencao || "N/A"}
+                    newValue={activity.localIntervencao || "N/A"}
+                    label="Local da intervenção"
+                    hasOriginalValues={!!originalActivity}
                   />
                 ) : (
-                  activity.localIntervencao
+                  activity.localIntervencao || "N/A"
                 )}
               </div>
-
               <div>
                 <span className="font-medium">Esquema:</span>{" "}
                 {originalActivity ? (
                   <ChangedValue
-                    oldValue={originalActivity.esquema}
-                    newValue={activity.esquema}
-                    hasChange={hasChanges}
+                    oldValue={originalActivity.esquema || "N/A"}
+                    newValue={activity.esquema || "N/A"}
+                    label="Esquema"
+                    hasOriginalValues={!!originalActivity}
                   />
                 ) : (
-                  activity.esquema
+                  activity.esquema || "N/A"
                 )}
               </div>
 
@@ -912,7 +985,8 @@ export default function ServiceSchedulerApp() {
                   <ChangedValue
                     oldValue={originalActivity.observacoes || ""}
                     newValue={activity.observacoes || ""}
-                    hasChange={hasChanges}
+                    label="Observações"
+                    hasOriginalValues={!!originalActivity}
                   />
                 ) : (
                   activity.observacoes || "N/A"
@@ -1063,7 +1137,7 @@ export default function ServiceSchedulerApp() {
                   oldValue={formatPK(originalActivity.pkInicialKm, originalActivity.pkInicialMeters)}
                   newValue={formatPK(firstActivity.pkInicialKm, firstActivity.pkInicialMeters)}
                   label="Pk Inicial"
-                  hasChange={true}
+                  hasOriginalValues={!!originalActivity}
                 />
               ) : (
                 formatPK(firstActivity.pkInicialKm, firstActivity.pkInicialMeters)
@@ -1077,7 +1151,7 @@ export default function ServiceSchedulerApp() {
                   oldValue={formatPK(originalActivity.pkFinalKm, originalActivity.pkFinalMeters)}
                   newValue={formatPK(firstActivity.pkFinalKm, firstActivity.pkFinalMeters)}
                   label="Pk Final"
-                  hasChange={true}
+                  hasOriginalValues={!!originalActivity}
                 />
               ) : (
                 formatPK(firstActivity.pkFinalKm, firstActivity.pkFinalMeters)
@@ -1087,9 +1161,14 @@ export default function ServiceSchedulerApp() {
             <div>
               <span className="font-medium">Perfil:</span>{" "}
               {originalActivity ? (
-                <ChangedValue oldValue={originalActivity.perfil} newValue={firstActivity.perfil} hasChange={true} />
+                <ChangedValue
+                  oldValue={originalActivity.perfil || "N/A"}
+                  newValue={firstActivity.perfil || "N/A"}
+                  label="Perfil"
+                  hasOriginalValues={!!originalActivity}
+                />
               ) : (
-                firstActivity.perfil
+                firstActivity.perfil || "N/A"
               )}
             </div>
 
@@ -1097,21 +1176,27 @@ export default function ServiceSchedulerApp() {
               <span className="font-medium">Restrições:</span>{" "}
               {originalActivity ? (
                 <ChangedValue
-                  oldValue={originalActivity.restricoes.join(", ")}
-                  newValue={firstActivity.restricoes.join(", ")}
-                  hasChange={true}
+                  oldValue={originalActivity.restricoes?.join(", ") || "N/A"}
+                  newValue={firstActivity.restricoes?.join(", ") || "N/A"}
+                  label="Restrições"
+                  hasOriginalValues={!!originalActivity}
                 />
               ) : (
-                firstActivity.restricoes.join(", ")
+                firstActivity.restricoes?.join(", ") || "N/A"
               )}
             </div>
 
             <div>
               <span className="font-medium">Sentido:</span>{" "}
               {originalActivity ? (
-                <ChangedValue oldValue={originalActivity.sentido} newValue={firstActivity.sentido} hasChange={true} />
+                <ChangedValue
+                  oldValue={originalActivity.sentido || "N/A"}
+                  newValue={firstActivity.sentido || "N/A"}
+                  label="Sentido"
+                  hasOriginalValues={!!originalActivity}
+                />
               ) : (
-                firstActivity.sentido
+                firstActivity.sentido || "N/A"
               )}
             </div>
 
@@ -1119,12 +1204,13 @@ export default function ServiceSchedulerApp() {
               <span className="font-medium">Tipo de trabalho:</span>{" "}
               {originalActivity ? (
                 <ChangedValue
-                  oldValue={originalActivity.tipoTrabalho}
-                  newValue={firstActivity.tipoTrabalho}
-                  hasChange={true}
+                  oldValue={originalActivity.tipoTrabalho || "N/A"}
+                  newValue={firstActivity.tipoTrabalho || "N/A"}
+                  label="Tipo de Trabalho"
+                  hasOriginalValues={!!originalActivity}
                 />
               ) : (
-                firstActivity.tipoTrabalho
+                firstActivity.tipoTrabalho || "N/A"
               )}
             </div>
 
@@ -1132,21 +1218,27 @@ export default function ServiceSchedulerApp() {
               <span className="font-medium">Local da intervenção:</span>{" "}
               {originalActivity ? (
                 <ChangedValue
-                  oldValue={originalActivity.localIntervencao}
-                  newValue={firstActivity.localIntervencao}
-                  hasChange={true}
+                  oldValue={originalActivity.localIntervencao || "N/A"}
+                  newValue={firstActivity.localIntervencao || "N/A"}
+                  label="Local da Intervenção"
+                  hasOriginalValues={!!originalActivity}
                 />
               ) : (
-                firstActivity.localIntervencao
+                firstActivity.localIntervencao || "N/A"
               )}
             </div>
 
             <div>
               <span className="font-medium">Esquema:</span>{" "}
               {originalActivity ? (
-                <ChangedValue oldValue={originalActivity.esquema} newValue={firstActivity.esquema} hasChange={true} />
+                <ChangedValue
+                  oldValue={originalActivity.esquema || "N/A"}
+                  newValue={firstActivity.esquema || "N/A"}
+                  label="Esquema"
+                  hasOriginalValues={!!originalActivity}
+                />
               ) : (
-                firstActivity.esquema
+                firstActivity.esquema || "N/A"
               )}
             </div>
 
@@ -1156,7 +1248,8 @@ export default function ServiceSchedulerApp() {
                 <ChangedValue
                   oldValue={originalActivity.observacoes || ""}
                   newValue={firstActivity.observacoes || ""}
-                  hasChange={true}
+                  label="Observações"
+                  hasOriginalValues={!!originalActivity}
                 />
               ) : (
                 firstActivity.observacoes || "N/A"
@@ -1176,7 +1269,7 @@ export default function ServiceSchedulerApp() {
     return (
       <>
         <DialogHeader>
-          <DialogTitle>Detalhes do Plano: {plan.numero}</DialogTitle> {/* Added plan number to title */}
+          <DialogTitle>Detalhes do Plano: {plan.numero}</DialogTitle>
           <DialogDescription>
             Resumo completo do plano de trabalho submetido.
             {plan.status === "Editado - Pendente Aprovação" && (
@@ -1184,77 +1277,113 @@ export default function ServiceSchedulerApp() {
                 Este plano foi editado. Os valores alterados estão destacados.
               </span>
             )}
+            {plan.status === "Editado - Pendente Aprovação GDC" && (
+              <span className="block mt-2 text-orange-600 font-semibold">
+                Este plano foi editado e aguarda aprovação do GDC. Os valores alterados estão destacados.
+              </span>
+            )}
           </DialogDescription>
           {plan.comentarioGO && (
             <div className="mt-4 p-4 rounded-lg border-2 bg-destructive/10 border-destructive/20">
-              <p className="text-sm font-semibold text-destructive mb-1">Motivo da Rejeição:</p>
+              <p className="text-sm font-semibold text-destructive mb-1">Motivo da Rejeição (GO):</p>
               <p className="text-sm text-destructive/90">{plan.comentarioGO}</p>
+            </div>
+          )}
+          {plan.comentarioGDC && (
+            <div className="mt-4 p-4 rounded-lg border-2 bg-orange-100 border-orange-300">
+              <p className="text-sm font-semibold text-orange-800 mb-1">Motivo da Rejeição (GDC):</p>
+              <p className="text-sm text-orange-700">{plan.comentarioGDC}</p>
+            </div>
+          )}
+          {/* CHANGE: Display edit information */}
+          {plan.editedBy && plan.editedAt && (
+            <div className="mt-4 p-4 rounded-lg border-2 bg-blue-50 border-blue-200">
+              <p className="text-sm font-semibold text-blue-800 mb-1">
+                Editado por:{" "}
+                {plan.editedBy === "gestordecontrato@teste.pt" ? "Gestor de Contrato" : "Gestor de Operações"}
+              </p>
+              <p className="text-sm text-blue-700">
+                Data da edição: {format(parseISO(plan.editedAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+              </p>
             </div>
           )}
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Header Section */}
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Cabeçalho</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Concessão:</p>
-                <ChangedValue
-                  oldValue={originalValues?.concessao || ""}
-                  newValue={plan.concessao || "N/A"}
-                  label="Concessão"
-                />
+                <p className="text-sm text-muted-foreground mb-1">Concessão:</p>
+                <p>
+                  <ChangedValue
+                    newValue={plan.concessao}
+                    oldValue={originalValues?.concessao}
+                    hasOriginalValues={!!originalValues}
+                  />
+                </p>
               </div>
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Autoestrada:</p>
-                <ChangedValue
-                  oldValue={originalValues?.autoEstrada || ""}
-                  newValue={plan.autoEstrada || "N/A"}
-                  label="Autoestrada"
-                />
+                <p className="text-sm text-muted-foreground mb-1">Autoestrada:</p>
+                <p>
+                  <ChangedValue
+                    newValue={plan.autoEstrada}
+                    oldValue={originalValues?.autoEstrada}
+                    hasOriginalValues={!!originalValues}
+                  />
+                </p>
               </div>
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Km Inicial:</p>
-                <ChangedValue
-                  oldValue={originalValues?.kmInicial || ""}
-                  newValue={plan.kmInicial || "N/A"}
-                  label="Km Inicial"
-                />
+                <p className="text-sm text-muted-foreground mb-1">Km Inicial:</p>
+                <p>
+                  <ChangedValue
+                    newValue={plan.kmInicial}
+                    oldValue={originalValues?.kmInicial}
+                    hasOriginalValues={!!originalValues}
+                  />
+                </p>
               </div>
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Km Final:</p>
-                <ChangedValue
-                  oldValue={originalValues?.kmFinal || ""}
-                  newValue={plan.kmFinal || "N/A"}
-                  label="Km Final"
-                />
+                <p className="text-sm text-muted-foreground mb-1">Km Final:</p>
+                <p>
+                  <ChangedValue
+                    newValue={plan.kmFinal}
+                    oldValue={originalValues?.kmFinal}
+                    hasOriginalValues={!!originalValues}
+                  />
+                </p>
               </div>
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Sublanço:</p>
-                <ChangedValue
-                  oldValue={originalValues?.numero || ""}
-                  newValue={plan.numero || "N/A"}
-                  label="Sublanço"
-                />
+                <p className="text-sm text-muted-foreground mb-1">Sublanço:</p>
+                <p>
+                  <ChangedValue
+                    newValue={plan.numero || "N/A"}
+                    oldValue={originalValues?.numero}
+                    hasOriginalValues={!!originalValues}
+                  />
+                </p>
               </div>
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Tipo de Trabalho:</p>
-                <ChangedValue
-                  oldValue={originalValues?.tipoTrabalho || ""}
-                  newValue={plan.tipoTrabalho || "N/A"}
-                  label="Tipo de Trabalho"
-                />
+                <p className="text-sm text-muted-foreground mb-1">Tipo de Trabalho:</p>
+                <p>
+                  <ChangedValue
+                    newValue={plan.tipoTrabalho}
+                    oldValue={originalValues?.tipoTrabalho}
+                    hasOriginalValues={!!originalValues}
+                  />
+                </p>
               </div>
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Atividade:</p>
-                <ChangedValue
-                  oldValue={originalValues?.atividade || ""}
-                  newValue={plan.atividade || "N/A"}
-                  label="Atividade"
-                />
+              <div className="sm:col-span-2">
+                <p className="text-sm text-muted-foreground mb-1">Atividade:</p>
+                <p>
+                  <ChangedValue
+                    newValue={plan.atividade}
+                    oldValue={originalValues?.atividade}
+                    hasOriginalValues={!!originalValues}
+                  />
+                </p>
               </div>
             </CardContent>
           </Card>
@@ -1266,49 +1395,75 @@ export default function ServiceSchedulerApp() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <p className="text-sm font-semibold mb-1">Fiscalização:</p>
-                <p className="text-sm font-medium text-muted-foreground">Nome:</p>
-                <ChangedValue
-                  oldValue={originalValues?.fiscalizacaoNome || ""}
-                  newValue={plan.fiscalizacaoNome || "N/A"}
-                  label="Nome Fiscalização"
-                />
-                <p className="text-sm font-medium text-muted-foreground mt-2">Contacto:</p>
-                <ChangedValue
-                  oldValue={originalValues?.fiscalizacaoContato || ""}
-                  newValue={plan.fiscalizacaoContato || "N/A"}
-                  label="Contato Fiscalização"
-                />
+                <p className="font-semibold mb-1">Fiscalização:</p>
+                <div className="space-y-2">
+                  <p className="font-medium">Nome:</p>
+                  <p>
+                    <ChangedValue
+                      newValue={plan.fiscalizacaoNome || "N/A"}
+                      oldValue={originalValues?.fiscalizacaoNome}
+                      hasOriginalValues={!!originalValues}
+                    />
+                  </p>
+                </div>
+
+                <div className="space-y-2 mt-4">
+                  <p className="font-medium">Contacto:</p>
+                  <p>
+                    <ChangedValue
+                      newValue={plan.fiscalizacaoContato || "N/A"}
+                      oldValue={originalValues?.fiscalizacaoContato}
+                      hasOriginalValues={!!originalValues}
+                    />
+                  </p>
+                </div>
               </div>
               <div>
-                <p className="text-sm font-semibold mb-1">Entidade Executante:</p>
-                <p className="text-sm font-medium text-muted-foreground">Nome:</p>
-                <ChangedValue
-                  oldValue={originalValues?.entidadeExecutanteNome || ""}
-                  newValue={plan.entidadeExecutanteNome || "N/A"}
-                  label="Nome Entidade Executante"
-                />
-                <p className="text-sm font-medium text-muted-foreground mt-2">Contacto:</p>
-                <ChangedValue
-                  oldValue={originalValues?.entidadeExecutanteContato || ""}
-                  newValue={plan.entidadeExecutanteContato || "N/A"}
-                  label="Contato Entidade Executante"
-                />
+                <p className="font-semibold mb-1">Entidade Executante:</p>
+                <div className="space-y-2">
+                  <p className="font-medium">Nome:</p>
+                  <p>
+                    <ChangedValue
+                      newValue={plan.entidadeExecutanteNome || "N/A"}
+                      oldValue={originalValues?.entidadeExecutanteNome}
+                      hasOriginalValues={!!originalValues}
+                    />
+                  </p>
+                </div>
+
+                <div className="space-y-2 mt-4">
+                  <p className="font-medium">Contacto:</p>
+                  <p>
+                    <ChangedValue
+                      newValue={plan.entidadeExecutanteContato || "N/A"}
+                      oldValue={originalValues?.entidadeExecutanteContato}
+                      hasOriginalValues={!!originalValues}
+                    />
+                  </p>
+                </div>
               </div>
               <div>
-                <p className="text-sm font-semibold mb-1">Sinalização:</p>
-                <p className="text-sm font-medium text-muted-foreground">Nome:</p>
-                <ChangedValue
-                  oldValue={originalValues?.sinalizacaoNome || ""}
-                  newValue={plan.sinalizacaoNome || "N/A"}
-                  label="Nome Sinalização"
-                />
-                <p className="text-sm font-medium text-muted-foreground mt-2">Contacto:</p>
-                <ChangedValue
-                  oldValue={originalValues?.sinalizacaoContato || ""}
-                  newValue={plan.sinalizacaoContato || "N/A"}
-                  label="Contato Sinalização"
-                />
+                <p className="font-semibold mb-1">Sinalização:</p>
+                <div className="space-y-2">
+                  <p className="font-medium">Nome:</p>
+                  <p>
+                    <ChangedValue
+                      newValue={plan.sinalizacaoNome || "N/A"}
+                      oldValue={originalValues?.sinalizacaoNome}
+                      hasOriginalValues={!!originalValues}
+                    />
+                  </p>
+                </div>
+                <div className="space-y-2 mt-4">
+                  <p className="font-medium">Contacto:</p>
+                  <p>
+                    <ChangedValue
+                      newValue={plan.sinalizacaoContato || "N/A"}
+                      oldValue={originalValues?.sinalizacaoContato}
+                      hasOriginalValues={!!originalValues}
+                    />
+                  </p>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -1319,9 +1474,7 @@ export default function ServiceSchedulerApp() {
               <CardTitle className="text-lg">Atividades ({plan.atividades.length}):</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Display grouped activities instead of individual activities */}
               {activityGroups.map((group, groupIndex) => {
-                // Calculate the starting index for this group in the original activities array
                 let startIndex = 0
                 for (let i = 0; i < groupIndex; i++) {
                   startIndex += activityGroups[i].activities.length
@@ -1340,7 +1493,24 @@ export default function ServiceSchedulerApp() {
           </Card>
         </div>
 
-        <DialogFooter className="mt-6">
+        <DialogFooter className="mt-6 gap-2">
+          {/* CHANGE: Add edit button for GO and GDC roles */}
+          {(userRole === "go" || userRole === "gestordecontrato") &&
+            (plan.status === "Pendente Aprovação" ||
+              plan.status === "Pendente Aprovação GDC" ||
+              plan.status === "Editado - Pendente Aprovação" ||
+              plan.status === "Editado - Pendente Aprovação GDC") && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  handleEditPlan(plan)
+                }}
+                className="mr-auto"
+              >
+                <Edit className="w-4 h-4 mr-2" />
+                Editar
+              </Button>
+            )}
           <Button variant="outline" onClick={() => setSelectedPlanForDetails(null)}>
             Fechar
           </Button>
@@ -1360,15 +1530,25 @@ export default function ServiceSchedulerApp() {
       return false
     }
 
+    // Check if current dayData has a tipoTrabalhoDay set to "Trabalhos Fixos"
+    if (dayData.tipoTrabalhoDay !== "Trabalhos Fixos") {
+      return false
+    }
+
     // Calculate PK values in kilometers
     const pkInicial = Number.parseFloat(dayData.pkInicialKm) + Number.parseFloat(dayData.pkInicialMeters) / 1000
     const pkFinal = Number.parseFloat(dayData.pkFinalKm) + Number.parseFloat(dayData.pkFinalMeters) / 1000
 
+    // Check if PK values are valid numbers after parsing
+    if (isNaN(pkInicial) || isNaN(pkFinal)) {
+      return false
+    }
+
     // Calculate absolute difference
     const difference = Math.abs(pkFinal - pkInicial)
 
-    // Check if distance exceeds 3.5 km and tipo de trabalho is "Trabalhos Fixos"
-    if (difference > 3.5 && dayData.tipoTrabalhoDay === "Trabalhos Fixos") {
+    // Check if distance exceeds 3.5 km
+    if (difference > 3.5) {
       setPkValidationError({
         show: true,
         dateStr,
@@ -1992,12 +2172,14 @@ export default function ServiceSchedulerApp() {
         outrosLocais: dayData.localIntervencao ? [dayData.localIntervencao] : [],
         responsavelNome: "", // Not used in current form
         responsavelContacto: "", // Not used in current form
-        observacoes: dayData.observacoes || "",
+        observacoes: dayData.observacoes || "", // Initialize observacoes
+        autoEstrada: autoEstrada, // Add autoEstrada to DailyDetail
+        sublanco: dayData.sublanco, // Add sublanco to DailyDetail
       }
     })
 
     setDailyDetails(newDailyDetails)
-  }, [dayDataMap])
+  }, [dayDataMap, autoEstrada]) // Depend on autoEstrada to update DailyDetail
 
   useEffect(() => {
     const newWeeklyCounts: { [weekId: string]: number } = {}
@@ -2046,6 +2228,11 @@ export default function ServiceSchedulerApp() {
       setUserRole("prestador")
       setIsLoggedIn(true)
       setActiveTab("vegetal")
+    } else if (loginData.email === "gestordecontrato@teste.pt") {
+      setUser({ name: "Gestor de Contrato", email: loginData.email })
+      setUserRole("gestordecontrato")
+      setIsLoggedIn(true)
+      setActiveTab("aprovacao-gdc")
     } else if (loginData.email === "go@teste.pt") {
       setUser({ name: "Gestor de Operações", email: loginData.email })
       setUserRole("go")
@@ -2083,21 +2270,9 @@ export default function ServiceSchedulerApp() {
     setKmInicial("")
     setKmFinal("")
     setIsUrgente(false) // Reset urgent status on logout
-    setPkInicial("") // Resetting old states if they exist
-    setPkFinal("") // Resetting old states if they exist
-    setPkInicialKm("") // Reset new states
-    setPkInicialMeters("")
-    setPkFinalKm("")
-    setPkFinalMeters("")
-    setSentido("")
-    setPerfil("")
     setTrabalhoFixo(false)
     setTrabalhoMovel(false)
     setPerigosTemporarios(false)
-    setLocalIntervencao("")
-    setRestricoes([]) // Reset to empty array
-    setEsquema("")
-    setObservacoes("")
     setAtividades([])
     setEditingAtividadeId(null)
     setIsEditingApprovedPlan(false)
@@ -2114,6 +2289,11 @@ export default function ServiceSchedulerApp() {
     setEsquemaOptionsByDay({})
     setPkValidationError({ show: false, dateStr: "", distance: 0 })
     setDisabledTipoTrabalhoByDay({})
+    setPkConflictDialog({ open: false, conflictDetails: "" })
+    // Reset edit dialog state
+    setEditDialogOpen(false)
+    // Clear notifications on logout
+    setEditNotifications([])
   }
 
   const getDatesInRange = (startDate?: Date, endDate?: Date): Date[] => {
@@ -2128,7 +2308,7 @@ export default function ServiceSchedulerApp() {
   }
 
   // Function to generate an array of DayData objects for a given date range
-  const generateDaysData = (range: DateRange | undefined): DayData[] => {
+  const generateDaysData = (range: DayPickerDateRange | undefined): DayData[] => {
     if (!range?.from) return []
 
     const days: DayData[] = []
@@ -2343,6 +2523,7 @@ export default function ServiceSchedulerApp() {
       localIntervencao: currentDayData.localIntervencao,
       esquema: currentDayData.esquema,
       observacoes: currentDayData.observacoes,
+      // Work characteristics copied to the activity level, not per day
     }
 
     // Update the next day with copied data
@@ -2531,9 +2712,11 @@ export default function ServiceSchedulerApp() {
       atividade: atividade, // This is the main plan's atividade
       // Add other necessary fields for Atividade
       observacoes: dayDataMap[format(dateRange.from, "yyyy-MM-dd")]?.observacoes || "",
-      // Note: dayDataMap contains details for all days in the range.
-      // If you need to store aggregate values for the activity itself,
-      // you might need to derive them or store them differently.
+      sublanco: vegetalNumero, // Add sublanco to the activity
+      // Added work characteristics to the activity
+      trabalhoFixo: trabalhoFixo,
+      trabalhoMovel: trabalhoMovel,
+      perigosTemporarios: perigosTemporarios,
     }
 
     if (editingAtividadeId) {
@@ -2554,6 +2737,12 @@ export default function ServiceSchedulerApp() {
     setDateRange(atividade.periodo)
     setDayDataMap(atividade.dayDataMap || {}) // Restore day data
     setDailyDetails(atividade.detalhesDiarios || {}) // Restore daily details
+    setVegetalNumero(atividade.sublanco || "") // Set sublanco from activity
+
+    // Restore work characteristics
+    setTrabalhoFixo(atividade.trabalhoFixo || false)
+    setTrabalhoMovel(atividade.trabalhoMovel || false)
+    setPerigosTemporarios(atividade.perigosTemporarios || false)
 
     // Restore restricoes and esquema options for each day
     if (atividade.dayDataMap) {
@@ -2706,8 +2895,33 @@ export default function ServiceSchedulerApp() {
     return { hasConflict: false, conflictMessage: "" }
   }
 
-  const handleSubmitPlano = () => {
-    // Validate required fields for the plan
+  // FIX: Added confirmGDCRejection function
+  const confirmGDCRejection = () => {
+    setSubmittedPlans((prev) =>
+      prev.map((plan) =>
+        plan.id === confirmationDialog.planId
+          ? {
+              ...plan,
+              status: "Rejeitado",
+              comentarioGDC: rejectionComment || undefined,
+              originalValues: undefined, // Clear originalValues on rejection
+            }
+          : plan,
+      ),
+    )
+    setNotificationDialog({
+      open: true,
+      title: "Plano Rejeitado pelo GDC",
+      description: "O plano foi rejeitado. O prestador foi notificado.",
+    })
+    setConfirmationDialog({ open: false, type: "reject", planId: "", planTitle: "" })
+    setRejectionComment("")
+  }
+
+  const handleSubmitPlano = (e?: React.FormEvent) => {
+    if (e) e.preventDefault() // Prevent default form submission if event is passed
+
+    // Basic validation
     if (!vegetalNumero.trim()) {
       setNotificationDialog({
         open: true,
@@ -2834,98 +3048,170 @@ export default function ServiceSchedulerApp() {
       }
     }
 
+    // Determine the initial status based on user role and editing state
+    let newStatus: SubmittedPlan["status"]
     if (editingPlanId) {
-      setSubmittedPlans((prev) =>
-        prev.map((plan) =>
+      // If editing, maintain the original status if it was already pending GDC or GO,
+      // otherwise, transition to the appropriate pending state.
+      const originalPlan = submittedPlans.find((p) => p.id === editingPlanId)
+      if (originalPlan) {
+        if (originalPlan.status.includes("Pendente Aprovação GDC")) {
+          newStatus = isEditingApprovedPlan ? "Editado - Pendente Aprovação GDC" : "Pendente Aprovação GDC"
+        } else {
+          // If it was already approved or rejected by GO, and being edited
+          newStatus = isEditingApprovedPlan ? "Editado - Pendente Aprovação" : "Pendente Aprovação"
+        }
+      } else {
+        // Fallback if original plan not found (shouldn't happen)
+        newStatus = "Pendente Aprovação GDC"
+      }
+    } else {
+      // For new plans, always start with GDC approval
+      newStatus = "Pendente Aprovação GDC"
+    }
+
+    const submittedPlan: SubmittedPlan = {
+      id: editingPlanId || `plan-${Date.now()}`,
+      numero: vegetalNumero,
+      tipoTrabalho: tipoTrabalho,
+      atividade: atividade,
+      autoEstrada: autoEstrada,
+      concessao: concessao,
+      atividades,
+      status: newStatus,
+      tipo: "Manutenção Vegetal", // Assuming this is constant for now
+      isInISistema: false, // Default value for new plans
+      isUrgente: isUrgente,
+      kmInicial: kmInicial,
+      kmFinal: kmFinal,
+      trabalhoFixo: trabalhoFixo, // Set from state
+      trabalhoMovel: trabalhoMovel, // Set from state
+      perigosTemporarios: perigosTemporarios, // Set from state
+      fiscalizacaoNome: fiscalizacaoNome,
+      fiscalizacaoContato: fiscalizacaoContato,
+      entidadeExecutanteNome: entidadeExecutanteNome,
+      entidadeExecutanteContato: entidadeExecutanteContato,
+      sinalizacaoNome: sinalizacaoNome,
+      sinalizacaoContato: sinalizacaoContato,
+      comentarioGDC: undefined,
+      comentarioGO: editingPlanId ? submittedPlans.find((p) => p.id === editingPlanId)?.comentarioGO : undefined,
+      prestador: user.email, // Use user's email as prestador identifier
+      submittedAt: new Date().toISOString(),
+      // CHANGE: Only set originalValues if explicitly needed (not on initial submission)
+      originalValues: editingPlanId ? submittedPlans.find((p) => p.id === editingPlanId)?.originalValues : undefined,
+      editedBy: editingPlanId && (userRole === "gestordecontrato" || userRole === "go") ? user.email : undefined,
+      editedAt:
+        editingPlanId && (userRole === "gestordecontrato" || userRole === "go") ? new Date().toISOString() : undefined,
+    }
+
+    // CHANGE: Fix handleSubmitPlano to get fresh plan data before saving
+    if (editingPlanId) {
+      console.log("[v0] Updating existing plan. User role:", userRole)
+
+      setSubmittedPlans((prev) => {
+        const existingPlan = prev.find((p) => p.id === editingPlanId)
+
+        const preservedOriginalValues = existingPlan?.originalValues
+        console.log("[v0] Preserved originalValues:", preservedOriginalValues ? "YES" : "NO")
+
+        return prev.map((plan) =>
           plan.id === editingPlanId
             ? {
-                ...plan,
-                numero: vegetalNumero,
-                tipoTrabalho: tipoTrabalho,
-                atividade: atividade,
-                autoEstrada: autoEstrada,
-                concessao: concessao,
-                atividades: atividades,
-                status: isEditingApprovedPlan ? "Editado - Pendente Aprovação" : "Pendente Aprovação",
-                comentarioGO: undefined,
-                kmInicial,
-                kmFinal,
-                trabalhoFixo,
-                trabalhoMovel,
-                isUrgente,
-                perigosTemporarios,
-                fiscalizacaoNome,
-                fiscalizacaoContato,
-                entidadeExecutanteNome,
-                entidadeExecutanteContato,
-                sinalizacaoNome,
-                sinalizacaoContato,
-                // Only clear originalValues when plan is approved or rejected, not when resubmitted
-                originalValues: plan.originalValues,
+                ...submittedPlan,
+                id: plan.id,
+                status: userRole === "prestador" ? "Editado - Pendente Aprovação GDC" : submittedPlan.status,
+                originalValues: preservedOriginalValues, // Always preserve originalValues
+                editedBy: userRole === "prestador" ? undefined : user.email,
+                editedAt: userRole === "prestador" ? undefined : new Date().toISOString(),
               }
             : plan,
-        ),
+        )
+      })
+      console.log(
+        "[v0] Plan updated. New status:",
+        userRole === "prestador" ? "Editado - Pendente Aprovação GDC" : submittedPlan.status,
       )
       setNotificationDialog({
         open: true,
-        title: "Plano Submetido",
-        description: isEditingApprovedPlan
-          ? "Plano de trabalho editado e submetido com sucesso. Status: Editado - Pendente Aprovação"
-          : "Plano de trabalho submetido com sucesso. Status: Pendente de Aprovação",
+        title: "Plano Atualizado",
+        description: `Plano de Trabalho ${vegetalNumero} foi atualizado com sucesso.`,
       })
     } else {
-      const newPlan: SubmittedPlan = {
-        id: `plan-${Date.now()}`,
-        numero: vegetalNumero,
-        tipoTrabalho: tipoTrabalho,
-        atividade: atividade, // Save atividade when creating
-        autoEstrada: autoEstrada, // Save autoEstrada when creating
-        concessao: concessao, // Save concessao when creating
-        atividades: atividades,
-        status: "Pendente Aprovação", // Changed from "Pendente Confirmação"
-        tipo: "Manutenção Vegetal",
-        isInISistema: false,
-        isUrgente,
-        kmInicial,
-        kmFinal,
-        trabalhoFixo,
-        trabalhoMovel,
-        perigosTemporarios, // Add temporary dangers to plan data
-        fiscalizacaoNome,
-        fiscalizacaoContato,
-        entidadeExecutanteNome,
-        entidadeExecutanteContato,
-        sinalizacaoNome,
-        sinalizacaoContato,
-      }
-      setSubmittedPlans((prev) => [...prev, newPlan])
+      setSubmittedPlans((prev) => [...prev, submittedPlan])
       setNotificationDialog({
         open: true,
         title: "Plano Submetido",
-        description: "Plano de trabalho submetido com sucesso. Status: Pendente de Aprovação", // Changed from "Pendente de Confirmação"
+        description: `Plano de Trabalho ${vegetalNumero} foi submetido com sucesso para aprovação do GDC.`, // Using description for consistency
       })
+    }
+
+    setEditingPlanId(null)
+    setIsEditingApprovedPlan(false)
+    // CHANGE: Redirect to 'todos-planos-gdc' tab for GDC after submission/update
+    if (userRole === "gestordecontrato") {
+      setActiveTab("todos-planos-gdc")
+    } else {
+      setActiveTab("agendamentos") // Default tab for other roles
     }
     resetForm()
   }
 
-  const openConfirmationDialog = (type: "approve" | "reject", planId: string, planTitle: string) => {
-    setConfirmationDialog({
-      open: true,
-      type,
-      planId,
-      planTitle,
-    })
-    setRejectionComment("")
-  }
+  const confirmGDCApproval = () => {
+    const plan = submittedPlans.find((p) => p.id === confirmationDialog.planId)
 
-  const confirmApproval = () => {
     setSubmittedPlans((prev) =>
       prev.map((plan) =>
         plan.id === confirmationDialog.planId
-          ? { ...plan, status: "Confirmado", originalValues: undefined } // Clear originalValues on confirmation
+          ? // Preserve originalValues when GDC approves
+            { ...plan, status: "Pendente Aprovação", originalValues: plan.originalValues } // Send to GO for final approval, keep originalValues
           : plan,
       ),
     )
+
+    if (plan?.editedBy && plan.editedBy.includes("gestordecontrato")) {
+      const planTitle = `${plan.autoEstrada || "..."} - ${plan.numero || "..."} - ${plan.tipoTrabalho || "..."}`
+      setEditNotifications((prev) => [
+        ...prev,
+        {
+          planId: plan.id,
+          planTitle: planTitle,
+          editedBy: plan.editedBy,
+        },
+      ])
+    }
+
+    setNotificationDialog({
+      open: true,
+      title: "Plano Aprovado pelo GDC!",
+      description: "O plano foi aprovado e seguirá para aprovação do Gestor de Operações.",
+    })
+    setConfirmationDialog({ open: false, type: "approve", planId: "", planTitle: "" })
+  }
+
+  const confirmApproval = () => {
+    const plan = submittedPlans.find((p) => p.id === confirmationDialog.planId)
+
+    setSubmittedPlans((prev) =>
+      prev.map((plan) =>
+        plan.id === confirmationDialog.planId
+          ? // Preserve originalValues when GO approves (only clear on final confirmation)
+            { ...plan, status: "Confirmado", originalValues: plan.originalValues } // Keep originalValues even after confirmation
+          : plan,
+      ),
+    )
+
+    if (plan?.editedBy && plan.editedBy.includes("go@")) {
+      const planTitle = `${plan.autoEstrada || "..."} - ${plan.numero || "..."} - ${plan.tipoTrabalho || "..."}`
+      setEditNotifications((prev) => [
+        ...prev,
+        {
+          planId: plan.id,
+          planTitle: planTitle,
+          editedBy: plan.editedBy,
+        },
+      ])
+    }
+
     setNotificationDialog({
       open: true,
       title: "Plano Aprovado!",
@@ -2938,11 +3224,13 @@ export default function ServiceSchedulerApp() {
     setSubmittedPlans((prev) =>
       prev.map((plan) =>
         plan.id === confirmationDialog.planId
-          ? {
+          ? // Preserve originalValues even on rejection so prestador can see what was changed
+            {
               ...plan,
               status: "Rejeitado",
-              comentarioGO: rejectionComment || undefined,
-              originalValues: undefined, // Clear originalValues on rejection
+              comentarioGDC: userRole === "gestordecontrato" ? rejectionComment || undefined : plan.comentarioGDC,
+              comentarioGO: userRole === "go" ? rejectionComment || undefined : plan.comentarioGO,
+              originalValues: plan.originalValues, // Preserve originalValues on rejection
             }
           : plan,
       ),
@@ -2957,10 +3245,26 @@ export default function ServiceSchedulerApp() {
   }
 
   const handleEditPlan = (planToEdit: SubmittedPlan) => {
-    setEditingPlanId(planToEdit.id)
-    setIsEditingApprovedPlan(planToEdit.status === "Confirmado" || planToEdit.status === "Editado - Pendente Aprovação")
+    console.log("[v0] handleEditPlan called for plan:", planToEdit.id, "Status:", planToEdit.status)
 
-    if (planToEdit.status === "Confirmado" && !planToEdit.originalValues) {
+    setSelectedPlanForDetails(null)
+
+    setEditingPlanId(planToEdit.id)
+    // Set isEditingApprovedPlan based on whether the plan was previously Confirmed or Editado (GDC/GO)
+    setIsEditingApprovedPlan(
+      planToEdit.status === "Confirmado" ||
+        planToEdit.status === "Editado - Pendente Aprovação" ||
+        planToEdit.status === "Editado - Pendente Aprovação GDC",
+    )
+
+    if (
+      !planToEdit.originalValues &&
+      (userRole === "gestordecontrato" || userRole === "go") &&
+      (planToEdit.status === "Pendente Aprovação GDC" ||
+        planToEdit.status === "Pendente Aprovação" ||
+        planToEdit.status === "Confirmado")
+    ) {
+      console.log("[v0] Saving originalValues for first edit by GDC/GO")
       setSubmittedPlans((prev) =>
         prev.map((plan) =>
           plan.id === planToEdit.id
@@ -2974,6 +3278,9 @@ export default function ServiceSchedulerApp() {
                   concessao: plan.concessao,
                   kmInicial: plan.kmInicial,
                   kmFinal: plan.kmFinal,
+                  trabalhoFixo: plan.trabalhoFixo,
+                  trabalhoMovel: plan.trabalhoMovel,
+                  perigosTemporarios: plan.perigosTemporarios,
                   fiscalizacaoNome: plan.fiscalizacaoNome,
                   fiscalizacaoContato: plan.fiscalizacaoContato,
                   entidadeExecutanteNome: plan.entidadeExecutanteNome,
@@ -3007,7 +3314,28 @@ export default function ServiceSchedulerApp() {
     setEntidadeExecutanteContato(planToEdit.entidadeExecutanteContato || "")
     setSinalizacaoNome(planToEdit.sinalizacaoNome || "")
     setSinalizacaoContato(planToEdit.sinalizacaoContato || "")
-    setActiveTab("vegetal")
+
+    // Set the correct active tab based on the plan's status
+    if (
+      planToEdit.status.startsWith("Pendente Aprovação GDC") ||
+      planToEdit.status.startsWith("Editado - Pendente Aprovação GDC")
+    ) {
+      setActiveTab("aprovacao-gdc")
+      console.log("[v0] Switched to tab: aprovacao-gdc for editing")
+    } else if (
+      planToEdit.status.startsWith("Pendente Aprovação") ||
+      planToEdit.status.startsWith("Editado - Pendente Aprovação")
+    ) {
+      setActiveTab("aprovacao")
+      console.log("[v0] Switched to tab: aprovacao for editing")
+    } else {
+      // Fallback to the plan's tipoTrabalho if available, otherwise default to 'vegetal'
+      const tabBasedOnTipoTrabalho = planToEdit.tipoTrabalho?.toLowerCase() || "vegetal"
+      setActiveTab(tabBasedOnTipoTrabalho)
+      console.log("[v0] Switched to tab:", tabBasedOnTipoTrabalho, "for editing")
+    }
+
+    setEditDialogOpen(true)
   }
 
   const datesToRender = getDatesInRange(dateRange?.from, dateRange?.to)
@@ -3020,43 +3348,42 @@ export default function ServiceSchedulerApp() {
     const [yearStr, , weekNumStr] = weekId.split("-")
     const year = Number.parseInt(yearStr)
     const weekNum = Number.parseInt(weekNumStr)
-    const startDate = startOfWeek(new Date(year, 0, (weekNum - 1) * 7 + 1), { locale: ptBR, weekStartsOn: 1 })
+
+    const startDate = startOfWeek(new Date(year, 0, (weekNum - 1) * 7 + 1), {
+      locale: ptBR,
+      weekStartsOn: 1,
+    })
     const endDate = new Date(startDate)
-    endDate.setDate(startDate.getDate() + 4)
+    endDate.setDate(startDate.getDate() + 6)
 
     const plansForWeek = submittedPlans.filter((plan) => {
-      if (plan.atividades.length === 0 || !plan.atividades[0].periodo.from) return false
+      // Only consider plans that are confirmed or approved
+      if (plan.status !== "Confirmado" && plan.status !== "Aprovado") return false
 
-      // Show approved plans, or edited/rejected plans that are already in iSistema
-      const shouldShowInCCO =
-        plan.status === "Confirmado" ||
-        ((plan.status === "Editado - Pendente Aprovação" || plan.status === "Rejeitado") && plan.isInISistema)
-
-      if (!shouldShowInCCO) return false
-
-      const planWeekNum = getWeek(plan.atividades[0].periodo.from, { locale: ptBR, weekStartsOn: 1 })
-      const planYear = getYear(plan.atividades[0].periodo.from)
-      return planWeekNum === weekNum && planYear === year
+      // Check if any activity falls within the selected week
+      return plan.atividades.some((atividade) => {
+        const dayDataMap = atividade.dayDataMap || {}
+        return Object.keys(dayDataMap).some((dateStr) => {
+          const planDate = parseISO(dateStr)
+          return planDate >= startDate && planDate <= endDate
+        })
+      })
     })
-    setCurrentWeekPlans(plansForWeek)
-    setCurrentWeekTitle(
-      `Planos da Semana ${weekNum} (${format(startDate, "dd/MM", { locale: ptBR })} - ${format(endDate, "dd/MM/yyyy", { locale: ptBR })})`,
-    )
-    setIsWeeklyPlansDialogOpen(true)
-  }
 
-  const handleToggleISistemaStatus = (planId: string) => {
-    setSubmittedPlans((prev) =>
-      prev.map((plan) => (plan.id === planId ? { ...plan, isInISistema: !plan.isInISistema } : plan)),
+    console.log("[v0] CCO - Week clicked:", weekId)
+    console.log("[v0] CCO - Plans found:", plansForWeek.length)
+    console.log(
+      "[v0] CCO - Plan statuses:",
+      plansForWeek.map((p) => p.status),
     )
-    setCurrentWeekPlans((prev) =>
-      prev.map((plan) => (plan.id === planId ? { ...plan, isInISistema: !plan.isInISistema } : plan)),
-    )
-  }
 
-  const getEditingPlan = () => {
-    if (!editingPlanId) return null
-    return submittedPlans.find((plan) => plan.id === editingPlanId)
+    setCurrentWeekPlans({
+      week: weekNum.toString(),
+      startDate: format(startDate, "dd/MM", { locale: ptBR }),
+      endDate: format(endDate, "dd/MM/yyyy", { locale: ptBR }),
+      plans: plansForWeek,
+    })
+    // setIsWeeklyPlansDialogOpen(false) // Removed this line as the dialog is no longer used
   }
 
   const getPlansForDate = (date: Date) => {
@@ -3080,18 +3407,24 @@ export default function ServiceSchedulerApp() {
 
   const getStatusDisplayText = (status: string) => {
     if (status === "Confirmado") return "Aprovado"
-    if (status === "Editado - Pendente Aprovação") return "Editado - Pendente Aprovação"
+    if (status === "Pendente Aprovação GDC") return "Pendente Aprovação (GDC)"
+    if (status === "Editado - Pendente Aprovação GDC") return "Editado (GDC)"
+    if (status === "Pendente Aprovação") return "Pendente Aprovação (GO)"
+    if (status === "Editado - Pendente Aprovação") return "Editado (GO)"
     return status
   }
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case "Confirmado":
+      case "Aprovado": // Handle both for consistency
         return "bg-green-100 border-green-300 text-green-800"
+      case "Pendente Aprovação GDC":
+      case "Editado - Pendente Aprovação GDC":
+        return "bg-blue-100 border-blue-300 text-blue-800"
       case "Pendente Aprovação":
-        return "bg-yellow-100 border-yellow-300 text-yellow-800"
       case "Editado - Pendente Aprovação":
-        return "bg-orange-100 border-orange-300 text-orange-800"
+        return "bg-yellow-100 border-yellow-300 text-yellow-800"
       case "Rejeitado":
         return "bg-destructive/10 border-destructive text-destructive"
       default:
@@ -3122,8 +3455,8 @@ export default function ServiceSchedulerApp() {
         plan.id === removalDialog.planId
           ? {
               ...plan,
-              status: "Pendente Aprovação",
-              comentarioGO: removalReason || undefined,
+              status: "Pendente Aprovação", // Reset status to Pendente Aprovação (GO)
+              comentarioGO: removalReason || undefined, // Store removal reason as GO comment
               originalValues: undefined, // Clear originalValues after removal
             }
           : plan,
@@ -3132,7 +3465,8 @@ export default function ServiceSchedulerApp() {
     setNotificationDialog({
       open: true,
       title: "Remoção de aprovação efetuada com sucesso",
-      description: "A aprovação do plano de trabalho foi removida e o status foi alterado para Pendente Aprovação.",
+      description:
+        "A aprovação do plano de trabalho foi removida e o status foi alterado para Pendente Aprovação (GO).",
     })
     setRemovalDialog({ open: false, planId: "", planTitle: "" })
     setRemovalReason("")
@@ -3167,6 +3501,34 @@ export default function ServiceSchedulerApp() {
       from: normalizedFrom,
       to: normalizedTo,
     })
+  }
+
+  const handleViewPlanDetails = (plan: SubmittedPlan) => {
+    console.log("[v0] handleViewPlanDetails called for plan:", plan.id)
+    setSelectedPlanForDetails(plan)
+    // setIsWeeklyPlansDialogOpen(false) // Removed this line as the dialog is no longer used
+  }
+
+  const handleToggleISistemaStatus = (planId: string) => {
+    console.log("[v0] handleMarkAsInserted called for plan:", planId)
+    // Update the isInISistema status for the specific plan
+    setSubmittedPlans((prev) => prev.map((plan) => (plan.id === planId ? { ...plan, isInISistema: true } : plan)))
+    // Update the currentWeekPlans state as well to reflect the change immediately in the dialog
+    setCurrentWeekPlans((prev) => ({
+      ...prev,
+      plans: prev.plans.map((plan) => (plan.id === planId ? { ...plan, isInISistema: true } : plan)),
+    }))
+    toast({ title: "Sucesso", description: "Plano marcado como inserido em iSistema." })
+  }
+
+  // Helper function to get the current editing plan
+  const getEditingPlan = (): SubmittedPlan | undefined => {
+    return editingPlanId ? submittedPlans.find((plan) => plan.id === editingPlanId) : undefined
+  }
+
+  // Helper function to open confirmation dialog
+  const openConfirmationDialog = (type: "approve" | "reject", planId: string, planTitle: string) => {
+    setConfirmationDialog({ open: true, type, planId, planTitle })
   }
 
   if (!isLoggedIn) {
@@ -3965,7 +4327,7 @@ export default function ServiceSchedulerApp() {
                 </div>
 
                 <div className="flex justify-end gap-2 mt-6">
-                  <Button className=" bg-transparent" size="sm" onClick={handleAdicionarAtividade} variant="outline">
+                  <Button className="flex-1 bg-black text-white hover:bg-gray-800" onClick={handleAdicionarAtividade}>
                     <Plus className="w-4 h-4 mr-2" />
                     {editingAtividadeId ? "Atualizar Atividade" : "Adicionar Atividade"}
                   </Button>
@@ -4083,7 +4445,7 @@ export default function ServiceSchedulerApp() {
               </div>
 
               <div className="flex justify-end gap-2 mt-6">
-                <Button className=" flex-1" onClick={handleSubmitPlano}>
+                <Button className="flex-1 bg-black text-white hover:bg-gray-800" onClick={handleSubmitPlano}>
                   <CalendarDays className="w-4 h-4 mr-2" />
                   {editingPlanId ? "Atualizar Plano de Trabalho" : "Submeter Plano de Trabalho"}
                 </Button>
@@ -4095,6 +4457,367 @@ export default function ServiceSchedulerApp() {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {userRole === "gestordecontrato" && (
+          <Tabs defaultValue={activeTab} onValueChange={setActiveTab} className="space-y-6">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="aprovacao-gdc" className="flex items-center space-x-2">
+                <CalendarDays className="w-4 h-4" />
+                <span>Aprovação de Planos (GDC)</span>
+              </TabsTrigger>
+              <TabsTrigger value="todos-planos-gdc" className="flex items-center space-x-2">
+                <FileText className="w-4 h-4" />
+                <span>Todos os Agendamentos</span>
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="aprovacao-gdc" className="space-y-6">
+              {/* CHANGE: Added edit form when editingPlanId is set */}
+              {editingPlanId ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Editar Plano de Trabalho</CardTitle>
+                    <CardDescription>
+                      Faça as alterações necessárias ao plano. As alterações serão visíveis para o prestador.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    {/* Form fields matching the submission form */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-vegetal-numero">Número *</Label>
+                        <Input
+                          id="edit-vegetal-numero"
+                          value={vegetalNumero}
+                          onChange={(e) => setVegetalNumero(e.target.value)}
+                          placeholder="Ex: 2024-001"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-tipo-trabalho">Tipo de Trabalho *</Label>
+                        <Select value={tipoTrabalho} onValueChange={setTipoTrabalho}>
+                          <SelectTrigger id="edit-tipo-trabalho">
+                            <SelectValue placeholder="Selecione o tipo" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Revestimento Vegetal">Revestimento Vegetal</SelectItem>
+                            <SelectItem value="Obras de Arte">Obras de Arte</SelectItem>
+                            <SelectItem value="Pavimento">Pavimento</SelectItem>
+                            <SelectItem value="Outro">Outro</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-atividade">Atividade/Descrição *</Label>
+                      <Textarea
+                        id="edit-atividade"
+                        value={atividade}
+                        onChange={(e) => setAtividade(e.target.value)}
+                        placeholder="Descreva a atividade..."
+                        rows={3}
+                      />
+                    </div>
+
+                    <AutoEstradasSelect
+                      concessao={concessao}
+                      autoEstrada={autoEstrada}
+                      onConcessaoChange={setConcessao}
+                      onAutoEstradaChange={setAutoEstrada}
+                    />
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-km-inicial">Pk Inicial *</Label>
+                        <Input
+                          id="edit-km-inicial"
+                          value={kmInicial}
+                          onChange={(e) => setKmInicial(e.target.value)}
+                          placeholder="Ex: 1 Km + 500 m"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-km-final">Pk Final *</Label>
+                        <Input
+                          id="edit-km-final"
+                          value={kmFinal}
+                          onChange={(e) => setKmFinal(e.target.value)}
+                          placeholder="Ex: 2 Km + 300 m"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <Label>Características do Trabalho</Label>
+                      <div className="flex flex-col gap-3">
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            id="edit-trabalho-fixo"
+                            checked={trabalhoFixo}
+                            onCheckedChange={(checked) => setTrabalhoFixo(checked === true)}
+                          />
+                          <label htmlFor="edit-trabalho-fixo" className="text-sm cursor-pointer">
+                            Trabalho Fixo
+                          </label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            id="edit-trabalho-movel"
+                            checked={trabalhoMovel}
+                            onCheckedChange={(checked) => setTrabalhoMovel(checked === true)}
+                          />
+                          <label htmlFor="edit-trabalho-movel" className="text-sm cursor-pointer">
+                            Trabalho Móvel
+                          </label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            id="edit-perigos-temporarios"
+                            checked={perigosTemporarios}
+                            onCheckedChange={(checked) => setPerigosTemporarios(checked === true)}
+                          />
+                          <label htmlFor="edit-perigos-temporarios" className="text-sm cursor-pointer">
+                            Perigos Temporários
+                          </label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            id="edit-is-urgente"
+                            checked={isUrgente}
+                            onCheckedChange={(checked) => setIsUrgente(checked === true)}
+                          />
+                          <label htmlFor="edit-is-urgente" className="text-sm cursor-pointer">
+                            Intervenção Urgente
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Entidades section */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-medium">Entidades Envolvidas</h3>
+
+                      <div className="space-y-3">
+                        <Label>Fiscalização</Label>
+                        <div className="grid grid-cols-2 gap-4">
+                          <Input
+                            placeholder="Nome"
+                            value={fiscalizacaoNome}
+                            onChange={(e) => setFiscalizacaoNome(e.target.value)}
+                          />
+                          <Input
+                            placeholder="Contacto"
+                            value={fiscalizacaoContato}
+                            onChange={(e) => setFiscalizacaoContato(e.target.value)}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <Label>Entidade Executante</Label>
+                        <div className="grid grid-cols-2 gap-4">
+                          <Input
+                            placeholder="Nome"
+                            value={entidadeExecutanteNome}
+                            onChange={(e) => setEntidadeExecutanteNome(e.target.value)}
+                          />
+                          <Input
+                            placeholder="Contacto"
+                            value={entidadeExecutanteContato}
+                            onChange={(e) => setEntidadeExecutanteContato(e.target.value)}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <Label>Sinalização</Label>
+                        <div className="grid grid-cols-2 gap-4">
+                          <Input
+                            placeholder="Nome"
+                            value={sinalizacaoNome}
+                            onChange={(e) => setSinalizacaoNome(e.target.value)}
+                          />
+                          <Input
+                            placeholder="Contacto"
+                            value={sinalizacaoContato}
+                            onChange={(e) => setSinalizacaoContato(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Activities list */}
+                    <div className="space-y-4">
+                      <Label>Atividades ({atividades.length})</Label>
+                      {atividades.map((ativ) => (
+                        <Card key={ativ.id}>
+                          <CardContent className="pt-4">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <p className="font-medium">{ativ.descricao}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {/* CHANGE: Fixed locale variable name from pt to ptBR to match the import */}
+                                  {format(ativ.periodo.from!, "dd/MM/yyyy", { locale: ptBR })}
+                                  {ativ.periodo.to && ` - ${format(ativ.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`}
+                                </p>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </CardContent>
+                  <CardFooter className="flex justify-between">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setEditingPlanId(null)
+                        setIsEditingApprovedPlan(false)
+                      }}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button onClick={handleSubmitPlano}>Guardar Alterações</Button>
+                  </CardFooter>
+                </Card>
+              ) : (
+                <>
+                  {/* Existing approval list */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Planos Pendentes de Aprovação GDC</CardTitle>
+                      <CardDescription>
+                        Revise e aprove ou rejeite os planos de trabalho antes de enviá-los ao GO.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {submittedPlans.filter(
+                        (plan) =>
+                          plan.status === "Pendente Aprovação GDC" ||
+                          plan.status === "Editado - Pendente Aprovação GDC",
+                      ).length === 0 ? (
+                        <p className="text-muted-foreground">Nenhum plano pendente de aprovação GDC.</p>
+                      ) : (
+                        submittedPlans
+                          .filter(
+                            (plan) =>
+                              plan.status === "Pendente Aprovação GDC" ||
+                              plan.status === "Editado - Pendente Aprovação GDC",
+                          )
+                          .map((plan) => (
+                            <div
+                              key={plan.id}
+                              className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 border rounded-lg bg-white shadow-sm"
+                            >
+                              <div className="flex-1 space-y-1 mb-3 sm:mb-0">
+                                <h4 className="font-medium text-lg">
+                                  {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
+                                </h4>
+                                <p className="text-sm text-muted-foreground">
+                                  {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
+                                </p>
+                                <div className="flex gap-2">
+                                  <Badge variant="outline">{plan.status}</Badge>
+                                  {plan.isUrgente && (
+                                    <Badge className="bg-red-500 hover:bg-red-600 text-white">Urgente</Badge>
+                                  )}
+                                </div>
+
+                                <Dialog
+                                  onOpenChange={(open) => {
+                                    if (!open) {
+                                      setSelectedPlanForDetails(null)
+                                      setConfirmationDialog({ open: false, type: "approve", planId: "", planTitle: "" })
+                                    }
+                                  }}
+                                >
+                                  <DialogTrigger asChild>
+                                    <Button variant="link" size="sm" onClick={() => setSelectedPlanForDetails(plan)}>
+                                      Ver Detalhes
+                                    </Button>
+                                  </DialogTrigger>
+                                  <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
+                                    {selectedPlanForDetails && (
+                                      <DialogContentWithChangedValues plan={selectedPlanForDetails} />
+                                    )}
+                                  </DialogContent>
+                                </Dialog>
+                              </div>
+                              <div className="flex gap-2 mt-3 sm:mt-0">
+                                <Button
+                                  onClick={() =>
+                                    openConfirmationDialog(
+                                      "approve",
+                                      plan.id,
+                                      `${plan.autoEstrada || "..."} - ${plan.numero || "..."} - ${plan.tipoTrabalho || "..."}`,
+                                    )
+                                  }
+                                  className="bg-green-500 hover:bg-green-600 text-white"
+                                >
+                                  Aprovar
+                                </Button>
+                                <Button
+                                  variant="destructive"
+                                  onClick={() =>
+                                    openConfirmationDialog(
+                                      "reject",
+                                      plan.id,
+                                      `${plan.autoEstrada || "..."} - ${plan.numero || "..."} - ${plan.tipoTrabalho || "..."}`,
+                                    )
+                                  }
+                                >
+                                  Rejeitar
+                                </Button>
+                              </div>
+                            </div>
+                          ))
+                      )}
+                    </CardContent>
+                  </Card>
+                </>
+              )}
+            </TabsContent>
+
+            <TabsContent value="todos-planos-gdc">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <FileText className="w-5 h-5 text-blue-600" />
+                    <span>Todos os Agendamentos</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {submittedPlans.length === 0 ? (
+                    <p className="text-muted-foreground">Nenhum plano submetido.</p>
+                  ) : (
+                    submittedPlans.map((plan) => (
+                      <div
+                        key={plan.id}
+                        className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 border rounded-lg bg-white shadow-sm"
+                      >
+                        <div className="flex-1 space-y-1 mb-3 sm:mb-0">
+                          <h4 className="font-medium text-lg">
+                            {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
+                          </h4>
+                          <p className="text-sm text-muted-foreground">
+                            {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
+                          </p>
+                          <div className="flex gap-2">
+                            <Badge variant="outline">{plan.status}</Badge>
+                            {plan.isUrgente && (
+                              <Badge className="bg-red-500 hover:bg-red-600 text-white">Urgente</Badge>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         )}
 
         {userRole === "go" && (
@@ -4117,7 +4840,9 @@ export default function ServiceSchedulerApp() {
                     <CalendarDays className="w-5 h-5 text-blue-600" />
                     <span>Planos Pendentes de Aprovação</span>
                   </CardTitle>
-                  <CardDescription>Revise e aprove ou rejeite os planos de trabalho submetidos.</CardDescription>
+                  <CardDescription>
+                    Revise e aprove ou rejeite os planos de trabalho aprovados pelo GDC.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {submittedPlans.filter(
@@ -4435,6 +5160,108 @@ export default function ServiceSchedulerApp() {
                 </div>
               </CardContent>
             </Card>
+
+            {currentWeekPlans.plans.length > 0 && (
+              <Card className="border-2 border-primary shadow-lg">
+                <CardHeader className="bg-primary/5 border-b">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="text-2xl font-bold">Planos da Semana {currentWeekPlans.week}</CardTitle>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        Período: {currentWeekPlans.startDate} - {currentWeekPlans.endDate}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <Badge variant="outline" className="text-base px-4 py-1">
+                        {currentWeekPlans.plans.length} {currentWeekPlans.plans.length === 1 ? "plano" : "planos"}
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setCurrentWeekPlans({ week: "", startDate: "", endDate: "", plans: [] })}
+                      >
+                        <X className="w-5 h-5" />
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-3">
+                    Planos aprovados para esta semana. Clique em &quot;Ver Detalhes&quot; para ver informações completas
+                    ou marque como &quot;Inserido em iSistema&quot; quando concluído.
+                  </p>
+                </CardHeader>
+                <CardContent className="pt-6">
+                  <div className="flex gap-6 overflow-x-auto pb-4">
+                    {currentWeekPlans.plans.map((plan) => {
+                      const firstActivity = plan.atividades?.[0]
+
+                      const sublanco = firstActivity?.sublanco || ""
+
+                      const autoEstrada = plan.autoEstrada || "A1"
+                      const tipoTrabalho = firstActivity?.tipoTrabalho || plan.tipoTrabalho || "N/A"
+
+                      const planTitle = `${autoEstrada} - ${sublanco || "N/A"} - ${tipoTrabalho}`
+
+                      return (
+                        <Card
+                          key={plan.id}
+                          className="p-6 hover:shadow-lg transition-shadow border-2 min-w-[400px] flex-shrink-0"
+                        >
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="space-y-3 flex-1">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <h3 className="font-semibold text-lg">{planTitle}</h3>
+                                <Badge className="bg-green-600 hover:bg-green-700 text-white">Aprovado</Badge>
+                              </div>
+                              <div className="grid gap-2 text-sm text-muted-foreground">
+                                <p>
+                                  <strong>Prestador:</strong> {plan.prestador}
+                                </p>
+                                <p>
+                                  <strong>Submetido em:</strong>{" "}
+                                  {plan.submittedAt
+                                    ? format(new Date(plan.submittedAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+                                    : "N/A"}
+                                </p>
+                                <p>
+                                  <strong>Autoestrada:</strong> {autoEstrada}
+                                </p>
+                                <p>
+                                  <strong>Tipo de Trabalho:</strong> {tipoTrabalho}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-3 mt-6 pt-4 border-t">
+                            <Button
+                              variant="outline"
+                              size="default"
+                              onClick={() => handleViewPlanDetails(plan)}
+                              className="flex-1"
+                            >
+                              <Eye className="w-4 h-4 mr-2" />
+                              Ver Detalhes
+                            </Button>
+                            <Button
+                              variant="default"
+                              size="default"
+                              onClick={() => {
+                                handleToggleISistemaStatus(plan.id)
+                              }}
+                              disabled={plan.isInISistema}
+                              className={`flex-1 ${plan.isInISistema ? "bg-green-600 hover:bg-green-700" : "bg-black hover:bg-gray-800"}`}
+                            >
+                              <CheckCircle2 className="w-4 h-4 mr-2" />
+                              {plan.isInISistema ? "Já Inserido" : "Inserido em iSistema"}
+                            </Button>
+                          </div>
+                        </Card>
+                      )
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
         )}
 
@@ -4447,6 +5274,39 @@ export default function ServiceSchedulerApp() {
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {userRole === "prestador" && editNotifications.length > 0 && (
+                <div className="mb-6 space-y-2">
+                  {editNotifications.map((notification, index) => (
+                    <Alert key={index} className="border-blue-300 bg-blue-50">
+                      <Info className="h-4 w-4 text-blue-600" />
+                      <AlertTitle className="text-blue-900">Plano Editado</AlertTitle>
+                      <AlertDescription className="text-blue-800">
+                        O plano "{notification.planTitle}" foi editado por{" "}
+                        {notification.editedBy.includes("gestordecontrato")
+                          ? "Gestor de Contrato"
+                          : "Gestor de Operações"}
+                        .
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="ml-2 h-auto p-0 text-blue-600 underline"
+                          onClick={() => {
+                            const plan = submittedPlans.find((p) => p.id === notification.planId)
+                            if (plan) {
+                              setSelectedPlanForDetails(plan)
+                              // Remove this notification after viewing
+                              setEditNotifications((prev) => prev.filter((n) => n.planId !== notification.planId))
+                            }
+                          }}
+                        >
+                          Ver diferenças
+                        </Button>
+                      </AlertDescription>
+                    </Alert>
+                  ))}
+                </div>
+              )}
+
               <div className="space-y-4">
                 {submittedPlans.length === 0 ? (
                   <p className="text-muted-foreground">Nenhum agendamento submetido ainda.</p>
@@ -4459,17 +5319,34 @@ export default function ServiceSchedulerApp() {
                           {plan.tipo === "Beneficiação de Pavimento" && <Road className="w-5 h-5 text-gray-600" />}
                           {plan.tipo === "Manutenção Geral" && <Wrench className="w-5 h-5 text-blue-600" />}
                         </div>
-                        <div>
+                        <div className="flex-1">
                           <h4 className="font-medium">
                             {plan.autoEstrada || "..."} - {plan.numero || "..."} - {plan.tipoTrabalho || "..."}
                           </h4>
-                          <p className="text-sm text-muted-foreground">
-                            {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
-                          </p>
-                          {plan.comentarioGO && (
-                            <p className="text-sm text-red-600 mt-1">
-                              <strong>Comentário GO:</strong> {plan.comentarioGO}
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm text-muted-foreground">
+                              {plan.atividades.length} atividade{plan.atividades.length !== 1 && "s"}
                             </p>
+                            <Button
+                              variant="link"
+                              size="sm"
+                              className="h-auto p-0 text-sm text-blue-600 underline"
+                              onClick={() => setSelectedPlanForDetails(plan)}
+                            >
+                              Ver Detalhes
+                            </Button>
+                          </div>
+                          {plan.status === "Rejeitado" && plan.comentarioGO && (
+                            <div className="mt-2 p-3 rounded-lg border-2 bg-destructive/10 border-destructive/20">
+                              <p className="text-sm font-semibold text-red-800 mb-1">Motivo da Rejeição (GO):</p>
+                              <p className="text-sm text-red-700">{plan.comentarioGO}</p>
+                            </div>
+                          )}
+                          {plan.status === "Rejeitado" && plan.comentarioGDC && (
+                            <div className="mt-2 p-3 rounded-lg border-2 bg-orange-100 border-orange-300">
+                              <p className="text-sm font-semibold text-orange-800 mb-1">Motivo da Rejeição (GDC):</p>
+                              <p className="text-sm text-orange-700">{plan.comentarioGDC}</p>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -4477,8 +5354,9 @@ export default function ServiceSchedulerApp() {
                       <div className="flex items-center gap-2">
                         {(plan.status === "Pendente Aprovação" ||
                           plan.status === "Editado - Pendente Aprovação" ||
-                          plan.status === "Confirmado" ||
-                          plan.status === "Rejeitado") && (
+                          plan.status === "Pendente Aprovação GDC" ||
+                          plan.status === "Editado - Pendente Aprovação GDC" ||
+                          plan.status === "Confirmado") && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -4510,14 +5388,21 @@ export default function ServiceSchedulerApp() {
                               ? "outline"
                               : plan.status === "Confirmado"
                                 ? "default"
-                                : "destructive"
+                                : plan.status === "Rejeitado"
+                                  ? "destructive"
+                                  : "outline"
                           }
                           className={
-                            plan.status === "Confirmado"
+                            plan.status === "Confirmado" || plan.status === "Aprovado"
                               ? "h-9 text-base font-semibold bg-green-600 hover:bg-green-600 px-4 flex items-center"
-                              : plan.status === "Editado - Pendente Aprovação"
-                                ? "h-9 text-base font-semibold bg-orange-600 text-white hover:bg-orange-600 px-4 flex items-center"
-                                : "h-9 text-base font-semibold px-4 flex items-center"
+                              : plan.status === "Pendente Aprovação" || plan.status === "Editado - Pendente Aprovação"
+                                ? "h-9 text-base font-semibold bg-yellow-600 text-white hover:bg-yellow-600 px-4 flex items-center"
+                                : plan.status === "Pendente Aprovação GDC" ||
+                                    plan.status === "Editado - Pendente Aprovação GDC"
+                                  ? "h-9 text-base font-semibold bg-blue-600 text-white hover:bg-blue-600 px-4 flex items-center"
+                                  : plan.status === "Rejeitado"
+                                    ? "h-9 text-base font-semibold bg-red-600 text-white hover:bg-red-600 px-4 flex items-center"
+                                    : "h-9 text-base font-semibold px-4 flex items-center"
                           }
                         >
                           {getStatusDisplayText(plan.status)}
@@ -4549,7 +5434,7 @@ export default function ServiceSchedulerApp() {
 
       <Dialog
         open={confirmationDialog.open}
-        onOpenChange={(open) => setConfirmationDialog({ ...confirmationDialog, open })}
+        onOpenChange={() => setConfirmationDialog({ ...confirmationDialog, open: false })}
       >
         <DialogContent>
           <DialogHeader>
@@ -4557,42 +5442,51 @@ export default function ServiceSchedulerApp() {
               {confirmationDialog.type === "approve" ? "Confirmar Aprovação" : "Confirmar Rejeição"}
             </DialogTitle>
             <DialogDescription>
-              Pretende {confirmationDialog.type === "approve" ? "aprovar" : "rejeitar"} o plano de trabalho "
-              {confirmationDialog.planTitle}"?
+              {confirmationDialog.type === "approve"
+                ? `Tem a certeza de que deseja ${userRole === "gestordecontrato" ? "aprovar (GDC)" : "aprovar"} o plano "${confirmationDialog.planTitle}"?`
+                : `Tem a certeza de que deseja rejeitar o plano "${confirmationDialog.planTitle}"?`}
             </DialogDescription>
           </DialogHeader>
-
           {confirmationDialog.type === "reject" && (
-            <div className="py-4">
-              <Label htmlFor="rejection-comment" className="text-sm font-medium">
-                Comentários (opcional):
-              </Label>
+            <div className="space-y-2">
+              <Label htmlFor="rejection-comment">Comentário (obrigatório)</Label>
               <Textarea
                 id="rejection-comment"
-                placeholder="Motivo da rejeição..."
-                value={rejectionDialog.comment}
-                onChange={(e) => setRejectionDialog({ ...rejectionDialog, comment: e.target.value })}
-                rows={3}
-                className="mt-2"
+                placeholder="Por favor, indique o motivo da rejeição..."
+                value={rejectionComment}
+                onChange={(e) => setRejectionComment(e.target.value)}
+                className="min-h-[100px]"
               />
             </div>
           )}
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setConfirmationDialog({ open: false, type: "approve", planId: "", planTitle: "" })}
-            >
-              Não
+            <Button variant="outline" onClick={() => setConfirmationDialog({ ...confirmationDialog, open: false })}>
+              Cancelar
             </Button>
             <Button
-              onClick={confirmationDialog.type === "approve" ? confirmApproval : confirmRejection}
-              className={
-                confirmationDialog.type === "approve"
-                  ? "bg-green-500 hover:bg-green-600"
-                  : "bg-red-500 hover:bg-red-600"
-              }
+              onClick={() => {
+                if (confirmationDialog.type === "approve") {
+                  if (userRole === "gestordecontrato") {
+                    confirmGDCApproval()
+                  } else {
+                    confirmApproval()
+                  }
+                } else {
+                  if (!rejectionComment.trim()) {
+                    alert("Por favor, forneça um comentário para a rejeição.")
+                    return
+                  }
+                  if (userRole === "gestordecontrato") {
+                    confirmGDCRejection()
+                  } else {
+                    confirmRejection()
+                  }
+                }
+              }}
+              className={confirmationDialog.type === "approve" ? "bg-green-500 hover:bg-green-600" : ""}
+              variant={confirmationDialog.type === "approve" ? "default" : "destructive"}
             >
-              Sim
+              {confirmationDialog.type === "approve" ? "Aprovar" : "Rejeitar"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -4672,6 +5566,921 @@ export default function ServiceSchedulerApp() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Plan Details Dialog - shared between GO and CCO */}
+      <Dialog open={!!selectedPlanForDetails} onOpenChange={(open) => !open && setSelectedPlanForDetails(null)}>
+        <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
+          {selectedPlanForDetails && <DialogContentWithChangedValues plan={selectedPlanForDetails} />}
+        </DialogContent>
+      </Dialog>
+
+      {/* Add edit dialog in the render section */}
+      {editDialogOpen && editingPlanId && (
+        <Dialog
+          open={editDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              setEditDialogOpen(false)
+              setEditingPlanId(null)
+              setIsEditingApprovedPlan(false)
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Editar Plano de Trabalho</DialogTitle>
+              <DialogDescription>
+                Faça as alterações necessárias ao plano de trabalho. As alterações serão rastreadas.
+              </DialogDescription>
+            </DialogHeader>
+
+            {/* Form fields identical to the creation form */}
+            {/* This is a complete editing interface */}
+            <div className="space-y-6 py-4">
+              {/* Prestador Form Section - Copied from above */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <Leaf className="w-5 h-5 text-green-600" />
+                    <span className="font-semibold text-lg">
+                      {autoEstrada || vegetalNumero || tipoTrabalho || atividade
+                        ? `${autoEstrada || "..."} - ${vegetalNumero || "..."} - ${tipoTrabalho || "..."}${atividade ? `/${atividade}` : ""}`
+                        : "Editar Plano de Trabalho"}
+                    </span>
+                  </CardTitle>
+                  <div className="flex items-center space-x-2 mt-2">
+                    <Label htmlFor="urgente-checkbox" className="text-sm font-medium">
+                      Urgente?
+                    </Label>
+                    <Checkbox id="urgente-checkbox" checked={isUrgente} onCheckedChange={setIsUrgente} />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="space-y-4">
+                    <div>
+                      <Label className="my-1.5" htmlFor="concessao">
+                        Concessão
+                      </Label>
+                      <Select value={concessao} onValueChange={setConcessao}>
+                        <SelectTrigger id="concessao">
+                          <SelectValue placeholder="Selecione a concessão" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {concessoes.map((concessaoItem) => (
+                            <SelectItem key={concessaoItem.value} value={concessaoItem.value}>
+                              {concessaoItem.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <AutoEstradasSelect
+                        value={autoEstrada}
+                        onValueChange={setAutoEstrada}
+                        label="Auto Estrada"
+                        placeholder="Selecione a Auto Estrada"
+                        concessao={concessao}
+                        disabled={!concessao}
+                      />
+                    </div>
+
+                    <div className="flex gap-4">
+                      <div className="max-w-[120px]">
+                        <Label className="my-1.5" htmlFor="km-inicial">
+                          Km inicial
+                        </Label>
+                        <Input
+                          id="km-inicial"
+                          type="number"
+                          placeholder="Ex: 100"
+                          value={kmInicial}
+                          onChange={(e) => setKmInicial(e.target.value)}
+                          disabled={!autoEstrada}
+                        />
+                      </div>
+                      <div className="max-w-[120px]">
+                        <Label className="my-1.5" htmlFor="km-final">
+                          Km final
+                        </Label>
+                        <Input
+                          id="km-final"
+                          type="number"
+                          placeholder="Ex: 150"
+                          value={kmFinal}
+                          onChange={(e) => setKmFinal(e.target.value)}
+                          disabled={!kmInicial}
+                        />
+                      </div>
+                    </div>
+
+                    {editingPlanId && getEditingPlan()?.comentarioGO && (
+                      <div className="p-4 bg-destructive/10 border border-destructive rounded-lg">
+                        <Label className="text-sm font-semibold text-red-800 mb-2 block">
+                          Comentário do Gestor de Operações:
+                        </Label>
+                        <p className="text-sm text-red-700">{getEditingPlan()?.comentarioGO}</p>
+                      </div>
+                    )}
+
+                    <div className="space-y-4">
+                      <div>
+                        <Label className="my-1.5" htmlFor="sublanco">
+                          Sublanço
+                        </Label>
+                        <Input
+                          id="sublanco"
+                          placeholder="Ex: MV-001"
+                          value={vegetalNumero}
+                          readOnly
+                          className="max-w-md bg-muted cursor-not-allowed"
+                        />
+                      </div>
+
+                      <div className="flex gap-4">
+                        <div>
+                          <Label className="my-1.5" htmlFor="tipo-de-trabalho">
+                            Tipo de Trabalho
+                          </Label>
+                          <Select value={tipoTrabalho} onValueChange={setTipoTrabalho} disabled={!vegetalNumero}>
+                            <SelectTrigger id="tipo-de-trabalho">
+                              <SelectValue placeholder="Selecione o tipo de trabalho" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {tipoTrabalhoOptions.length > 0 ? (
+                                tipoTrabalhoOptions.map((tipo) => (
+                                  <SelectItem key={tipo} value={tipo}>
+                                    {tipo}
+                                  </SelectItem>
+                                ))
+                              ) : (
+                                <SelectItem value="loading" disabled>
+                                  Carregando...
+                                </SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <Label className="my-1.5" htmlFor="atividade">
+                            Atividade
+                          </Label>
+                          <Select value={atividade} onValueChange={setAtividade} disabled={!tipoTrabalho}>
+                            <SelectTrigger id="atividade">
+                              <SelectValue placeholder="Selecione a atividade" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {atividadeOptions.length > 0 ? (
+                                atividadeOptions.map((atv) => (
+                                  <SelectItem key={atv} value={atv}>
+                                    {atv}
+                                  </SelectItem>
+                                ))
+                              ) : tipoTrabalho ? (
+                                <SelectItem value="none" disabled>
+                                  Nenhuma atividade disponível
+                                </SelectItem>
+                              ) : (
+                                <SelectItem value="select-tipo" disabled>
+                                  Selecione o tipo de trabalho primeiro
+                                </SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="relative my-8">
+                        <div className="absolute inset-0 flex items-center">
+                          <span className="w-full border-t-2 border-border" />
+                        </div>
+                        <div className="relative flex justify-center text-sm uppercase">
+                          <span className="bg-card px-4 text-foreground font-semibold tracking-wide">
+                            Detalhes das Atividades
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Lista de atividades já adicionadas */}
+                      {atividades.length > 0 && (
+                        <div className="space-y-4">
+                          <Label className="text-lg font-semibold">Atividades Adicionadas ({atividades.length})</Label>
+                          <Accordion type="single" collapsible className="w-full">
+                            {atividades.map((atividade, index) => (
+                              <AccordionItem key={atividade.id} value={atividade.id}>
+                                <AccordionTrigger className="hover:no-underline">
+                                  <div className="flex items-center justify-between w-full pr-4">
+                                    <span className="font-medium">
+                                      Atividade {index + 1}: {atividade.descricao.substring(0, 50)}
+                                      {atividade.descricao.length > 50 && "..."}
+                                    </span>
+                                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleEditarAtividade(atividade)}
+                                      >
+                                        <Edit className="w-4 h-4" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleRemoverAtividade(atividade.id)}
+                                      >
+                                        <Trash2 className="w-4 h-4 text-red-500" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </AccordionTrigger>
+                                <AccordionContent>
+                                  <div className="p-4 space-y-3 bg-muted rounded-lg">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                                      <div>
+                                        <Label className="font-semibold">Descrição:</Label>
+                                        <p className="text-foreground">{atividade.descricao}</p>
+                                      </div>
+                                      <div>
+                                        <Label className="font-semibold">Período:</Label>
+                                        <p className="text-foreground">
+                                          {atividade.periodo.from && atividade.periodo.to
+                                            ? `${format(atividade.periodo.from, "dd/MM/yyyy", { locale: ptBR })}-${format(atividade.periodo.to, "dd/MM/yyyy", { locale: ptBR })}`
+                                            : "N/A"}
+                                        </p>
+                                      </div>
+                                      {atividade.pkInicialKm && (
+                                        <div>
+                                          <Label className="font-semibold">Pk Inicial:</Label>
+                                          <p className="text-foreground">{`${atividade.pkInicialKm}km ${atividade.pkInicialMeters}m`}</p>
+                                        </div>
+                                      )}
+                                      {atividade.pkFinalKm && (
+                                        <div>
+                                          <Label className="font-semibold">Pk Final:</Label>
+                                          <p className="text-foreground">{`${atividade.pkFinalKm}km ${atividade.pkFinalMeters}m`}</p>
+                                        </div>
+                                      )}
+                                      {atividade.sentido && (
+                                        <div>
+                                          <Label className="font-semibold">Sentido:</Label>
+                                          <p className="text-foreground capitalize">{atividade.sentido}</p>
+                                        </div>
+                                      )}
+                                      {atividade.perfil && (
+                                        <div>
+                                          <Label className="font-semibold">Perfil:</Label>
+                                          <p className="text-foreground">{atividade.perfil}</p>
+                                        </div>
+                                      )}
+                                      {atividade.localIntervencao && (
+                                        <div>
+                                          <Label className="font-semibold">Local de Intervenção:</Label>
+                                          <p className="text-foreground capitalize">
+                                            {atividade.localIntervencao.replace(/-/g, " ")}
+                                          </p>
+                                        </div>
+                                      )}
+                                      {atividade.restricoes && (
+                                        <div>
+                                          <Label className="font-semibold">Restrições:</Label>
+                                          <p className="text-foreground">{atividade.restricoes.join(", ")}</p>
+                                        </div>
+                                      )}
+                                      {atividade.esquema && (
+                                        <div>
+                                          <Label className="font-semibold">Esquema:</Label>
+                                          <p className="text-foreground">{atividade.esquema}</p>
+                                        </div>
+                                      )}
+                                      {atividade.observacoes && (
+                                        <div className="md:col-span-2">
+                                          <Label className="font-semibold">Observações:</Label>
+                                          <p className="text-foreground whitespace-pre-wrap">{atividade.observacoes}</p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </AccordionContent>
+                              </AccordionItem>
+                            ))}
+                          </Accordion>
+                        </div>
+                      )}
+
+                      <div>
+                        <Label htmlFor="descricao-atividade">Descrição da atividade</Label>
+                        <Textarea
+                          id="descricao-atividade"
+                          placeholder="Descreva a atividade a realizar..."
+                          value={descricaoAtividade}
+                          onChange={(e) => setDescricaoAtividade(e.target.value)}
+                          rows={1}
+                          className="max-w-md my-1"
+                        />
+                      </div>
+
+                      <div>
+                        <Label className="my-1.5">Período</Label>
+                        <Calendar
+                          key={dateRange?.from?.toISOString() || "no-selection"} // Force re-render on selection change
+                          initialFocus
+                          mode="single"
+                          defaultMonth={dateRange?.from}
+                          selected={dateRange}
+                          onDayClick={handleDayClick} // Use custom handler
+                          numberOfMonths={3}
+                          locale={ptBR}
+                          className="rounded-md border shadow"
+                          disabled={disableBlockedDates}
+                          modifiers={{
+                            holiday: (date) => isPortugueseHoliday(date),
+                          }}
+                          modifiersClassNames={{
+                            holiday: "bg-red-100 text-red-900 font-semibold hover:bg-red-200",
+                          }}
+                        />
+                        <div className="mt-3 text-xs text-muted-foreground text-center">
+                          {datesToRender.length === 0 && "Selecione um período no calendário"}
+                          {datesToRender.length === 1 && "1 dia selecionado"}
+                          {datesToRender.length > 1 && `${datesToRender.length} dias selecionados`}
+                        </div>
+                        <div className="mt-2 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                          <div className="flex items-center gap-1">
+                            <div className="w-3 h-3 bg-red-100 border border-red-300 rounded"></div>
+                            <span>Feriados Nacionais</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {datesToRender.length > 0 && (
+                        <div className="space-y-4">
+                          <Label className="text-base font-semibold">Detalhes por Dia</Label>
+                          <div className="flex flex-col lg:flex-row gap-4 overflow-x-auto">
+                            {datesToRender.map((date) => {
+                              const dateStr = format(date, "yyyy-MM-dd")
+                              const dayData = dayDataMap[dateStr]
+                              if (!dayData) return null
+
+                              const isLastDay = dateRange.to && format(dateRange.to, "yyyy-MM-dd") === dateStr
+
+                              return (
+                                <div
+                                  key={dateStr}
+                                  className="flex-shrink-0 border rounded-xl p-3 shadow-sm bg-white min-w-[300px] lg:min-w-[350px]"
+                                >
+                                  {/* Date header */}
+                                  <div className="mb-3 pb-2 border-b flex items-start justify-between">
+                                    <div>
+                                      <h4 className="font-semibold text-foreground">
+                                        {format(date, "dd/MM/yyyy", { locale: ptBR })}
+                                      </h4>
+                                      <p className="text-xs text-muted-foreground capitalize">
+                                        {format(date, "EEEE", { locale: ptBR })}
+                                      </p>
+                                    </div>
+                                    {!isLastDay && (
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => copyToNextDay(dateStr)}
+                                        className="flex items-center gap-1 text-xs h-8"
+                                      >
+                                        <Copy className="h-3 w-3" />
+                                        Copiar para dia seguinte
+                                      </Button>
+                                    )}
+                                  </div>
+
+                                  {/* Time fields - horizontal layout */}
+                                  <div className="flex flex-row gap-2 mb-3">
+                                    <div className="flex-1">
+                                      <Label htmlFor={`hora-inicio-${dateStr}`} className="text-xs my-1">
+                                        Hora de Início (24h)
+                                      </Label>
+                                      <Input
+                                        id={`hora-inicio-${dateStr}`}
+                                        type="text"
+                                        value={dayData.horaInicio}
+                                        onChange={(e) => handleTimeInput(dateStr, "horaInicio", e.target.value)}
+                                        disabled={dayData.todoDia}
+                                        className="text-sm"
+                                        placeholder="HH:MM"
+                                        pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+                                        maxLength={5}
+                                        required
+                                      />
+                                    </div>
+                                    <div className="flex-1">
+                                      <Label htmlFor={`hora-fim-${dateStr}`} className="text-xs my-1">
+                                        Hora de Fim (24h)
+                                      </Label>
+                                      <Input
+                                        id={`hora-fim-${dateStr}`}
+                                        type="text"
+                                        value={dayData.horaFim}
+                                        onChange={(e) => handleTimeInput(dateStr, "horaFim", e.target.value)}
+                                        disabled={dayData.todoDia}
+                                        className="text-sm"
+                                        placeholder="HH:MM"
+                                        pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+                                        maxLength={5}
+                                        required
+                                      />
+                                    </div>
+                                    <div className="flex flex-col justify-end pb-2">
+                                      <div className="flex items-center space-x-1">
+                                        <Checkbox
+                                          id={`todo-dia-${dateStr}`}
+                                          checked={dayData.todoDia}
+                                          onCheckedChange={(checked) =>
+                                            handleTodoDiaChange(dateStr, checked as boolean)
+                                          }
+                                        />
+                                        <Label htmlFor={`todo-dia-${dateStr}`} className="text-xs cursor-pointer">
+                                          Todo o dia
+                                        </Label>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Detail fields - vertical layout (shown when time is selected or todo dia is checked) */}
+                                  {(dayData.horaInicio || dayData.horaFim || dayData.todoDia) && (
+                                    <div className="space-y-3 pt-3 border-t">
+                                      <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                          <Label className="text-xs my-1">Pk inicial</Label>
+                                          <div className="flex items-center gap-2">
+                                            <Input
+                                              type="text"
+                                              inputMode="numeric"
+                                              placeholder="Km"
+                                              value={dayData.pkInicialKm}
+                                              onChange={(e) => {
+                                                const value = e.target.value.replace(/[^0-9]/g, "")
+                                                updateDayData(dateStr, "pkInicialKm", value)
+                                                reEnableTrabalhosFix(dateStr)
+                                                if (value) {
+                                                  setTimeout(() => {
+                                                    updateSublancoForDay(dateStr)
+                                                    const updatedDayData = {
+                                                      ...dayDataMap[dateStr],
+                                                      pkInicialKm: value,
+                                                    }
+                                                    validatePKDistance(dateStr, updatedDayData)
+                                                  }, 100)
+                                                }
+                                              }}
+                                              className="text-sm w-16"
+                                              maxLength={3}
+                                            />
+                                            <span className="text-lg font-semibold">+</span>
+                                            <Input
+                                              type="text"
+                                              inputMode="numeric"
+                                              placeholder="m"
+                                              value={dayData.pkInicialMeters}
+                                              onChange={(e) => {
+                                                const value = e.target.value.replace(/[^0-9]/g, "")
+                                                if (Number.parseInt(value) <= 999 || value === "") {
+                                                  updateDayData(dateStr, "pkInicialMeters", value)
+                                                  reEnableTrabalhosFix(dateStr)
+                                                  if (value) {
+                                                    setTimeout(() => {
+                                                      const updatedDayData = {
+                                                        ...dayDataMap[dateStr],
+                                                        pkInicialMeters: value,
+                                                      }
+                                                      validatePKDistance(dateStr, updatedDayData)
+                                                    }, 100)
+                                                  }
+                                                }
+                                              }}
+                                              className="text-sm w-16"
+                                              maxLength={3}
+                                            />
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <Label className="text-xs my-1">Pk final</Label>
+                                          <div className="flex items-center gap-2">
+                                            <Input
+                                              type="text"
+                                              inputMode="numeric"
+                                              placeholder="Km"
+                                              value={dayData.pkFinalKm}
+                                              onChange={(e) => {
+                                                const value = e.target.value.replace(/[^0-9]/g, "")
+                                                updateDayData(dateStr, "pkFinalKm", value)
+                                                reEnableTrabalhosFix(dateStr)
+                                                if (value) {
+                                                  setTimeout(() => {
+                                                    updateSublancoForDay(dateStr)
+                                                    const updatedDayData = { ...dayDataMap[dateStr], pkFinalKm: value }
+                                                    validatePKDistance(dateStr, updatedDayData)
+                                                  }, 100)
+                                                }
+                                              }}
+                                              className="text-sm w-16"
+                                              maxLength={3}
+                                            />
+                                            <span className="text-lg font-semibold">+</span>
+                                            <Input
+                                              type="text"
+                                              inputMode="numeric"
+                                              placeholder="m"
+                                              value={dayData.pkFinalMeters}
+                                              onChange={(e) => {
+                                                const value = e.target.value.replace(/[^0-9]/g, "")
+                                                if (Number.parseInt(value) <= 999 || value === "") {
+                                                  updateDayData(dateStr, "pkFinalMeters", value)
+                                                  reEnableTrabalhosFix(dateStr)
+                                                  if (value) {
+                                                    setTimeout(() => {
+                                                      const updatedDayData = {
+                                                        ...dayDataMap[dateStr],
+                                                        pkFinalMeters: value,
+                                                      }
+                                                      validatePKDistance(dateStr, updatedDayData)
+                                                    }, 100)
+                                                  }
+                                                }
+                                              }}
+                                              className="text-sm w-16"
+                                              maxLength={3}
+                                            />
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      <div>
+                                        <Label className="text-xs my-1">Perfil</Label>
+                                        <Select
+                                          value={dayData.perfil}
+                                          onValueChange={(value) => {
+                                            updateDayData(dateStr, "perfil", value)
+                                            updateRestricoesOptionsForDay(dateStr, value)
+                                            // Clear selected restrictions when perfil changes
+                                            updateDayData(dateStr, "restricoes", [])
+                                          }}
+                                        >
+                                          <SelectTrigger id={`perfil-${dateStr}`} className="text-sm">
+                                            <SelectValue placeholder="Selecione" />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {perfilOptions.length > 0 ? (
+                                              perfilOptions.map((perfil) => (
+                                                <SelectItem key={perfil} value={perfil}>
+                                                  {perfil}
+                                                </SelectItem>
+                                              ))
+                                            ) : (
+                                              <SelectItem value="loading" disabled>
+                                                Carregando...
+                                              </SelectItem>
+                                            )}
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+
+                                      <div>
+                                        <Label className="text-xs mb-2 block">Restrições</Label>
+                                        {restricoesOptionsByDay[dateStr] &&
+                                        restricoesOptionsByDay[dateStr].length > 0 ? (
+                                          <div className="space-y-2 max-h-40 overflow-y-auto border rounded-md p-2">
+                                            {restricoesOptionsByDay[dateStr].map((restricao) => (
+                                              <div key={restricao} className="flex items-center space-x-2">
+                                                <Checkbox
+                                                  id={`restricao-${dateStr}-${restricao}`}
+                                                  checked={dayData.restricoes.includes(restricao)}
+                                                  onCheckedChange={(checked) => {
+                                                    const currentRestricoes = dayData.restricoes || []
+                                                    const newRestricoes = checked
+                                                      ? [...currentRestricoes, restricao]
+                                                      : currentRestricoes.filter((r) => r !== restricao)
+                                                    updateDayData(dateStr, "restricoes", newRestricoes)
+                                                  }}
+                                                />
+                                                <Label
+                                                  htmlFor={`restricao-${dateStr}-${restricao}`}
+                                                  className="text-xs cursor-pointer"
+                                                >
+                                                  {restricao}
+                                                </Label>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <p className="text-xs text-muted-foreground italic">
+                                            {dayData.perfil
+                                              ? "Nenhuma restrição disponível"
+                                              : "Selecione um perfil primeiro"}
+                                          </p>
+                                        )}
+                                      </div>
+
+                                      <div>
+                                        <Label className="text-xs my-1">Sentido</Label>
+                                        <Select
+                                          value={dayData.sentido}
+                                          onValueChange={(value) => {
+                                            updateDayData(dateStr, "sentido", value)
+                                          }}
+                                        >
+                                          <SelectTrigger id={`sentido-${dateStr}`} className="text-sm">
+                                            <SelectValue placeholder="Selecione" />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="crescente">Crescente</SelectItem>
+                                            <SelectItem value="decrescente">Decrescente</SelectItem>
+                                            <SelectItem value="ambos">Ambos</SelectItem>
+                                            <SelectItem value="nenhum">Nenhum</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+
+                                      <div>
+                                        <Label htmlFor={`tipo-trabalho-day-${dateStr}`} className="text-xs my-1">
+                                          Tipo de trabalho
+                                        </Label>
+                                        <Select
+                                          value={dayData.tipoTrabalhoDay}
+                                          onValueChange={(value) => {
+                                            updateDayData(dateStr, "tipoTrabalhoDay", value)
+                                            updateEsquemaOptionsForDay(dateStr, value)
+                                            setTimeout(() => {
+                                              const updatedDayData = { ...dayDataMap[dateStr], tipoTrabalhoDay: value }
+                                              validatePKDistance(dateStr, updatedDayData)
+
+                                              // If user selected Trabalhos Fixos, validate all other days too
+                                              if (value === "Trabalhos Fixos") {
+                                                setTimeout(() => {
+                                                  validateAllDaysWithTrabalhosFix()
+                                                }, 200)
+                                              }
+                                            }, 100)
+                                          }}
+                                        >
+                                          <SelectTrigger id={`tipo-trabalho-day-${dateStr}`} className="text-sm">
+                                            <SelectValue placeholder="Selecione" />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {tipoTrabalhoPerDayOptions.length > 0 ? (
+                                              tipoTrabalhoPerDayOptions
+                                                .filter((tipo) => !disabledTipoTrabalhoByDay[dateStr]?.includes(tipo))
+                                                .map((tipo) => (
+                                                  <SelectItem key={tipo} value={tipo}>
+                                                    {tipo}
+                                                  </SelectItem>
+                                                ))
+                                            ) : (
+                                              <SelectItem value="loading" disabled>
+                                                Carregando...
+                                              </SelectItem>
+                                            )}
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+
+                                      <div>
+                                        <Label htmlFor={`local-intervencao-${dateStr}`} className="text-xs my-1">
+                                          Local da intervenção
+                                        </Label>
+                                        <Select
+                                          value={dayData.localIntervencao}
+                                          onValueChange={(value) => updateDayData(dateStr, "localIntervencao", value)}
+                                        >
+                                          <SelectTrigger id={`local-intervencao-${dateStr}`} className="text-sm">
+                                            <SelectValue placeholder="Selecione" />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="plena-via">Plena Via</SelectItem>
+                                            <SelectItem value="no-ramo">Nó / Ramo</SelectItem>
+                                            <SelectItem value="separador-central">Separador Central</SelectItem>
+                                            <SelectItem value="talude">Talude</SelectItem>
+                                            <SelectItem value="acesso-exterior">Acesso Exterior</SelectItem>
+                                            <SelectItem value="portagem">Portagem</SelectItem>
+                                            <SelectItem value="area-servico">Área de Serviço</SelectItem>
+                                            <SelectItem value="area-repouso">Área de Repouso</SelectItem>
+                                            <SelectItem value="fora-concessao">Fora da Concessão</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+
+                                      <div>
+                                        <Label htmlFor={`esquema-${dateStr}`} className="text-xs my-1">
+                                          Esquema
+                                        </Label>
+                                        <Select
+                                          value={dayData.esquema}
+                                          onValueChange={(value) => updateDayData(dateStr, "esquema", value)}
+                                        >
+                                          <SelectTrigger id={`esquema-${dateStr}`} className="text-sm">
+                                            <SelectValue placeholder="Selecione" />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {esquemaOptionsByDay[dateStr] && esquemaOptionsByDay[dateStr].length > 0 ? (
+                                              esquemaOptionsByDay[dateStr].map((esquema) => (
+                                                <SelectItem key={esquema} value={esquema}>
+                                                  {esquema}
+                                                </SelectItem>
+                                              ))
+                                            ) : dayData.tipoTrabalhoDay ? (
+                                              <SelectItem value="none" disabled>
+                                                Nenhum esquema disponível
+                                              </SelectItem>
+                                            ) : (
+                                              <SelectItem value="select-tipo" disabled>
+                                                Selecione o tipo de trabalho primeiro
+                                              </SelectItem>
+                                            )}
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+
+                                      <div>
+                                        <Label htmlFor={`observacoes-${dateStr}`} className="text-xs my-1">
+                                          Observações
+                                        </Label>
+                                        <Textarea
+                                          id={`observacoes-${dateStr}`}
+                                          placeholder="Observações..."
+                                          value={dayData.observacoes}
+                                          onChange={(e) => updateDayData(dateStr, "observacoes", e.target.value)}
+                                          rows={2}
+                                          className="text-sm"
+                                        />
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end gap-2 mt-6">
+                      <Button className="flex-1 bg-black text-white hover:bg-gray-800" onClick={handleSubmitPlano}>
+                        <CalendarDays className="w-4 h-4 mr-2" />
+                        {editingPlanId ? "Atualizar Plano de Trabalho" : "Submeter Plano de Trabalho"}
+                      </Button>
+                      {editingPlanId && (
+                        <Button variant="outline" onClick={resetForm}>
+                          Cancelar Edição
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="relative my-8">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t-2 border-border" />
+                    </div>
+                    <div className="relative flex justify-center text-sm uppercase">
+                      <span className="bg-card px-4 text-foreground font-semibold tracking-wide">Contactos</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    {/* Fiscalização */}
+                    <div className="space-y-4">
+                      <Label className="text-base font-semibold text-foreground">Fiscalização</Label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label className="my-1.5" htmlFor="fiscalizacao-nome">
+                            Nome
+                          </Label>
+                          <Input
+                            className="px-3.5"
+                            id="fiscalizacao-nome"
+                            type="text"
+                            placeholder="Nome do responsável"
+                            value={fiscalizacaoNome}
+                            onChange={(e) => setFiscalizacaoNome(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <Label className="my-1.5" htmlFor="fiscalizacao-contato">
+                            Contato
+                          </Label>
+                          <Input
+                            id="fiscalizacao-contato"
+                            type="tel"
+                            placeholder="Telefone ou email"
+                            value={fiscalizacaoContato}
+                            onChange={(e) => setFiscalizacaoContato(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Entidade Executante */}
+                    <div className="space-y-4">
+                      <Label className="text-base font-semibold text-foreground">Entidade Executante</Label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label className="my-1.5" htmlFor="entidade-nome">
+                            Nome
+                          </Label>
+                          <Input
+                            id="entidade-nome"
+                            type="text"
+                            placeholder="Nome do responsável"
+                            value={entidadeExecutanteNome}
+                            onChange={(e) => setEntidadeExecutanteNome(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <Label className="my-1.5" htmlFor="entidade-contato">
+                            Contato
+                          </Label>
+                          <Input
+                            id="entidade-contato"
+                            type="tel"
+                            placeholder="Telefone ou email"
+                            value={entidadeExecutanteContato}
+                            onChange={(e) => setEntidadeExecutanteContato(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Sinalização */}
+                    <div className="space-y-4">
+                      <Label className="text-base font-semibold text-foreground">Sinalização</Label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label className="my-1.5" htmlFor="sinalizacao-nome">
+                            Nome
+                          </Label>
+                          <Input
+                            id="sinalizacao-nome"
+                            type="text"
+                            placeholder="Nome do responsável"
+                            value={sinalizacaoNome}
+                            onChange={(e) => setSinalizacaoNome(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <Label className="my-1.5" htmlFor="sinalizacao-contato">
+                            Contato
+                          </Label>
+                          <Input
+                            id="sinalizacao-contato"
+                            type="tel"
+                            placeholder="Telefone ou email"
+                            value={sinalizacaoContato}
+                            onChange={(e) => setSinalizacaoContato(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 mt-6">
+                    <Button className="flex-1 bg-black text-white hover:bg-gray-800" onClick={handleSubmitPlano}>
+                      <CalendarDays className="w-4 h-4 mr-2" />
+                      {editingPlanId ? "Atualizar Plano de Trabalho" : "Submeter Plano de Trabalho"}
+                    </Button>
+                    {editingPlanId && (
+                      <Button variant="outline" onClick={resetForm}>
+                        Cancelar Edição
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="flex gap-2 justify-end">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setEditDialogOpen(false)
+                  setEditingPlanId(null)
+                  setIsEditingApprovedPlan(false)
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => {
+                  // Save the edited plan
+                  handleSubmitPlano()
+                  setEditDialogOpen(false)
+                }}
+              >
+                Guardar Alterações
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }
+
+export default ServiceSchedulerApp
