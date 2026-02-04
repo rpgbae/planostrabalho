@@ -123,9 +123,10 @@
     
     <div class="info-box">
         <strong>Documento:</strong> Especificação Funcional<br>
-        <strong>Versão:</strong> 1.0<br>
-        <strong>Data:</strong> Janeiro 2025<br>
-        <strong>Sistema:</strong> Portal de Agendamento de Planos de Trabalho
+        <strong>Versão:</strong> 2.0<br>
+        <strong>Data:</strong> Fevereiro 2026<br>
+        <strong>Sistema:</strong> Portal de Agendamento de Planos de Trabalho<br>
+        <strong>Atualização:</strong> Inclusão do perfil Gestor de Contrato (GDC) e fluxo de aprovação em duas etapas
     </div>
 
     <div class="section">
@@ -138,11 +139,13 @@
         <p>O sistema abrange:</p>
         <ul>
             <li>Criação e submissão de planos de trabalho por prestadores de serviços</li>
-            <li>Aprovação e rejeição de planos por gestores operacionais</li>
+            <li><strong>Aprovação em duas etapas:</strong> primeiro pelo Gestor de Contrato (GDC), depois pelo Gestor Operacional (GO)</li>
+            <li>Rejeição de planos com comentário obrigatório em qualquer etapa do fluxo</li>
             <li>Visualização de calendário com planos aprovados</li>
             <li>Gestão de atividades e períodos de trabalho</li>
             <li>Controlo de acessos baseado em perfis de utilizador</li>
             <li>Dashboard administrativo para gestão de dados</li>
+            <li>Edição de planos por GDC e GO com rastreabilidade de alterações</li>
         </ul>
 
         <h3>1.3 Tipos de Utilizadores</h3>
@@ -152,6 +155,7 @@
                     <th>Perfil</th>
                     <th>Email de Acesso</th>
                     <th>Descrição</th>
+                    <th>Posição no Fluxo</th>
                 </tr>
             </thead>
             <tbody>
@@ -159,24 +163,43 @@
                     <td><strong>Prestador de Serviços</strong></td>
                     <td>prestador@teste.pt</td>
                     <td>Cria e submete planos de trabalho, edita planos rejeitados ou aprovados</td>
+                    <td>Início do fluxo - Criação</td>
+                </tr>
+                <tr>
+                    <td><strong>Gestor de Contrato (GDC)</strong></td>
+                    <td>gestordecontrato@teste.pt</td>
+                    <td>Primeira etapa de aprovação: revisa e aprova/rejeita planos submetidos pelo prestador</td>
+                    <td>1ª Aprovação</td>
                 </tr>
                 <tr>
                     <td><strong>Gestor Operacional (GO)</strong></td>
                     <td>go@teste.pt</td>
-                    <td>Aprova ou rejeita planos, remove aprovações, visualiza calendário</td>
+                    <td>Segunda etapa de aprovação: aprova/rejeita planos já aprovados pelo GDC, remove aprovações, visualiza calendário</td>
+                    <td>2ª Aprovação (Final)</td>
                 </tr>
                 <tr>
                     <td><strong>Coordenador de Operações (CCO)</strong></td>
                     <td>cco@teste.pt</td>
-                    <td>Visualiza dashboard com estatísticas e relatórios</td>
+                    <td>Visualiza dashboard com estatísticas, relatórios e visão geral semanal de planos</td>
+                    <td>Monitorização</td>
                 </tr>
                 <tr>
                     <td><strong>Administrador</strong></td>
                     <td>admin@teste.pt</td>
-                    <td>Gere dados mestres (concessões, autoestradas, tipos de trabalho, etc.)</td>
+                    <td>Gere dados mestres, utilizadores e configurações do sistema</td>
+                    <td>Gestão do Sistema</td>
                 </tr>
             </tbody>
         </table>
+
+        <h3>1.4 Hierarquia de Aprovação</h3>
+        <div class="info-box">
+            <p><strong>Fluxo de Aprovação em Duas Etapas:</strong></p>
+            <p style="text-align: center; font-size: 1.1em; margin: 15px 0;">
+                <strong>Prestador</strong> → <strong>GDC (1ª Aprovação)</strong> → <strong>GO (2ª Aprovação)</strong> → <strong>Aprovado</strong>
+            </p>
+            <p>Este fluxo garante uma revisão em duas camadas antes da aprovação final, permitindo maior controlo de qualidade e conformidade dos planos de trabalho.</p>
+        </div>
     </div>
 
     <div class="section">
@@ -250,19 +273,20 @@
         </div>
 
         <h4>2.1.4 Submissão de Plano</h4>
-        <p>Após preencher todos os campos obrigatórios e adicionar pelo menos uma atividade, o prestador pode submeter o plano. O plano fica com o status:</p>
-        <p><span class="status-badge status-pending">Pendente Aprovação</span></p>
+        <p>Após preencher todos os campos obrigatórios e adicionar pelo menos uma atividade, o prestador pode submeter o plano. O plano fica com o status inicial:</p>
+        <p><span class="status-badge status-pending">Pendente Aprovação GDC</span></p>
+        <p>O plano é então encaminhado para a fila de aprovação do <strong>Gestor de Contrato (GDC)</strong>, que realiza a primeira etapa de revisão.</p>
 
         <h4>2.1.5 Edição de Planos</h4>
         <p>O prestador pode editar planos nos seguintes estados:</p>
         <ul>
-            <li><strong>Pendente Aprovação:</strong> Edição livre, mantém o status após resubmissão</li>
-            <li><strong>Rejeitado:</strong> Edição livre, muda para "Pendente Aprovação" após resubmissão</li>
-            <li><strong>Aprovado (Confirmado):</strong> Edição permitida, muda para "Editado - Pendente Aprovação" após resubmissão</li>
+            <li><strong>Pendente Aprovação GDC:</strong> Edição livre, mantém o status após resubmissão</li>
+            <li><strong>Rejeitado:</strong> Edição livre, muda para "Pendente Aprovação GDC" após resubmissão</li>
+            <li><strong>Aprovado (Confirmado):</strong> Edição permitida, muda para "Editado - Pendente Aprovação GDC" após resubmissão</li>
         </ul>
 
         <div class="warning-box">
-            <strong>Importante:</strong> Quando um plano aprovado é editado e resubmetido, ele volta para a fila de aprovação com o status <span class="status-badge status-edited">Editado - Pendente Aprovação</span> e requer nova aprovação do Gestor Operacional.
+            <strong>Importante:</strong> Quando um plano aprovado é editado pelo prestador e resubmetido, ele volta ao início do fluxo com o status <span class="status-badge status-edited">Editado - Pendente Aprovação GDC</span> e requer nova aprovação de ambos GDC e GO.
         </div>
 
         <h4>2.1.6 Visualização de Planos</h4>
@@ -274,38 +298,93 @@
             <li>Botão "Editar" para planos editáveis</li>
         </ul>
 
-        <h3>2.2 Gestor Operacional (GO)</h3>
+        <h3>2.2 Gestor de Contrato (GDC) - 1ª Etapa de Aprovação</h3>
 
-        <h4>2.2.1 Aprovação de Planos</h4>
-        <p>O GO tem acesso a um separador dedicado "Aprovação de Planos" onde pode:</p>
+        <h4>2.2.1 Aprovação de Planos (Primeira Etapa)</h4>
+        <p>O GDC tem acesso a um separador dedicado "Aprovação de Planos (GDC)" onde pode:</p>
         <ul>
-            <li>Visualizar todos os planos com status "Pendente Aprovação" ou "Editado - Pendente Aprovação"</li>
+            <li>Visualizar todos os planos com status "Pendente Aprovação GDC" ou "Editado - Pendente Aprovação GDC"</li>
             <li>Ver detalhes completos de cada plano (cabeçalho, contactos, atividades, detalhes diários)</li>
-            <li>Aprovar planos (muda status para <span class="status-badge status-approved">Aprovado</span>)</li>
+            <li>Aprovar planos (muda status para <span class="status-badge status-pending">Pendente Aprovação</span> - encaminhado para GO)</li>
             <li>Rejeitar planos com comentário obrigatório (muda status para <span class="status-badge status-rejected">Rejeitado</span>)</li>
+            <li>Editar planos antes de aprovar ou rejeitar</li>
         </ul>
 
-        <h5>Processo de Aprovação:</h5>
+        <h5>Processo de Aprovação GDC:</h5>
         <ol>
-            <li>GO clica em "Ver Detalhes" para analisar o plano completo</li>
+            <li>GDC acede ao separador "Aprovação de Planos (GDC)"</li>
+            <li>Visualiza lista de planos pendentes da sua aprovação</li>
+            <li>Clica em "Ver Detalhes" para analisar o plano completo</li>
             <li>Revisa todas as informações (cabeçalho, contactos, atividades, períodos)</li>
-            <li>Clica em "Aprovar" ou "Rejeitar"</li>
-            <li>Se rejeitar, deve inserir um comentário explicativo</li>
+            <li>Opcionalmente, pode editar o plano para correções menores</li>
+            <li>Clica em "Aprovar (GDC)" ou "Rejeitar"</li>
+            <li>Se rejeitar, deve inserir um comentário explicativo (guardado em comentarioGDC)</li>
             <li>Confirma a ação no diálogo de confirmação</li>
-            <li>O prestador é notificado da decisão</li>
+            <li>Se aprovado, o plano avança para a fila do GO; se rejeitado, volta para o prestador</li>
         </ol>
 
-        <h4>2.2.2 Remoção de Aprovação</h4>
+        <h4>2.2.2 Edição de Planos pelo GDC</h4>
+        <p>O GDC pode editar planos que estejam pendentes da sua aprovação:</p>
+        <ul>
+            <li>Ao editar, o sistema guarda os valores originais para comparação</li>
+            <li>Campos alterados são destacados visualmente quando o GO revisa o plano</li>
+            <li>O sistema regista quem editou (editedBy) e quando (editedAt)</li>
+            <li>Permite correções de dados sem rejeitar e devolver ao prestador</li>
+        </ul>
+
+        <h4>2.2.3 Visualização de Planos</h4>
+        <p>O GDC tem acesso ao separador "Todos os Planos (GDC)" onde pode:</p>
+        <ul>
+            <li>Ver histórico de todos os planos processados</li>
+            <li>Filtrar por status (pendentes, aprovados, rejeitados)</li>
+            <li>Acompanhar o progresso dos planos no fluxo de aprovação</li>
+        </ul>
+
+        <h3>2.3 Gestor Operacional (GO) - 2ª Etapa de Aprovação</h3>
+
+        <h4>2.3.1 Aprovação de Planos (Segunda/Final Etapa)</h4>
+        <p>O GO tem acesso a um separador dedicado "Aprovação de Planos" onde pode:</p>
+        <ul>
+            <li>Visualizar todos os planos com status "Pendente Aprovação" ou "Editado - Pendente Aprovação" (já aprovados pelo GDC)</li>
+            <li>Ver detalhes completos de cada plano (cabeçalho, contactos, atividades, detalhes diários)</li>
+            <li>Visualizar campos que foram alterados pelo GDC (destacados em amarelo)</li>
+            <li>Aprovar planos (muda status para <span class="status-badge status-approved">Aprovado</span>)</li>
+            <li>Rejeitar planos com comentário obrigatório (muda status para <span class="status-badge status-rejected">Rejeitado</span>)</li>
+            <li>Editar planos antes de aprovar ou rejeitar</li>
+        </ul>
+
+        <h5>Processo de Aprovação GO:</h5>
+        <ol>
+            <li>GO acede ao separador "Aprovação de Planos"</li>
+            <li>Visualiza lista de planos já aprovados pelo GDC</li>
+            <li>Clica em "Ver Detalhes" para analisar o plano completo</li>
+            <li>Revisa todas as informações, incluindo alterações feitas pelo GDC</li>
+            <li>Opcionalmente, pode editar o plano para correções</li>
+            <li>Clica em "Aprovar" ou "Rejeitar"</li>
+            <li>Se rejeitar, deve inserir um comentário explicativo (guardado em comentarioGO)</li>
+            <li>Confirma a ação no diálogo de confirmação</li>
+            <li>Se aprovado, o plano aparece no calendário; se rejeitado, volta para o prestador</li>
+        </ol>
+
+        <h4>2.3.2 Edição de Planos pelo GO</h4>
+        <p>O GO pode editar planos que estejam pendentes da sua aprovação:</p>
+        <ul>
+            <li>Ao editar, o sistema guarda os valores originais para comparação</li>
+            <li>O sistema regista quem editou (editedBy) e quando (editedAt)</li>
+            <li>Permite correções finais antes da aprovação</li>
+        </ul>
+
+        <h4>2.3.3 Remoção de Aprovação</h4>
         <p>O GO tem a capacidade exclusiva de remover aprovações de planos já aprovados:</p>
         <ul>
             <li>Na secção "Todos os Agendamentos", planos aprovados mostram o botão "Remover Aprovação"</li>
             <li>Este botão é visível apenas para o perfil GO (go@teste.pt)</li>
             <li>Ao clicar, abre um diálogo solicitando o motivo da remoção</li>
-            <li>Após confirmação, o plano volta ao status "Pendente Aprovação"</li>
+            <li>Após confirmação, o plano volta ao status "Pendente Aprovação" (fila do GO, não volta para GDC)</li>
             <li>O motivo da remoção é guardado no campo comentarioGO</li>
         </ul>
 
-        <h4>2.2.3 Visualização de Calendário</h4>
+        <h4>2.3.4 Visualização de Calendário</h4>
         <p>O GO tem acesso a um calendário interativo que mostra:</p>
         <ul>
             <li>Todos os planos aprovados organizados por data</li>
@@ -314,16 +393,19 @@
             <li>Informações de PK, perfil, restrições, sentido, tipo de trabalho, local e esquema</li>
         </ul>
 
-        <h3>2.3 Coordenador de Operações (CCO)</h3>
-        <p>O CCO tem acesso a um dashboard com:</p>
+        <h3>2.4 Coordenador de Operações (CCO)</h3>
+        <p>O CCO tem acesso a um dashboard de monitorização com:</p>
         <ul>
-            <li>Estatísticas gerais de planos (total, pendentes, aprovados, rejeitados)</li>
-            <li>Visualizações gráficas de dados</li>
+            <li>Estatísticas gerais de planos (total, pendentes GDC, pendentes GO, aprovados, rejeitados)</li>
+            <li>Visualização semanal de planos organizados por semana</li>
+            <li>Contador de planos por semana no calendário</li>
+            <li>Detalhes dos planos ao clicar em cada semana</li>
+            <li>Informações do prestador, datas, empresa e status de cada plano</li>
             <li>Relatórios de atividades por período</li>
             <li>Análise de desempenho e métricas operacionais</li>
         </ul>
 
-        <h3>2.4 Administrador</h3>
+        <h3>2.5 Administrador</h3>
         <p>O administrador tem acesso a um painel de gestão de dados mestres onde pode:</p>
         <ul>
             <li>Gerir concessões (adicionar, editar, remover)</li>
@@ -349,70 +431,121 @@
             </thead>
             <tbody>
                 <tr>
-                    <td><span class="status-badge status-pending">Pendente Aprovação</span></td>
-                    <td>Plano submetido aguardando aprovação do GO</td>
+                    <td><span class="status-badge status-pending">Pendente Aprovação GDC</span></td>
+                    <td>Plano submetido aguardando primeira aprovação pelo GDC</td>
                     <td>
                         <strong>Prestador:</strong> Editar<br>
-                        <strong>GO:</strong> Aprovar, Rejeitar
+                        <strong>GDC:</strong> Aprovar (envia para GO), Rejeitar, Editar
                     </td>
                 </tr>
                 <tr>
-                    <td><span class="status-badge status-approved">Aprovado</span></td>
-                    <td>Plano aprovado pelo GO e agendado no calendário</td>
+                    <td><span class="status-badge status-edited">Editado - Pendente Aprovação GDC</span></td>
+                    <td>Plano anteriormente aprovado que foi editado e resubmetido, aguardando GDC</td>
                     <td>
-                        <strong>Prestador:</strong> Editar (volta para "Editado - Pendente Aprovação")<br>
+                        <strong>Prestador:</strong> Editar<br>
+                        <strong>GDC:</strong> Aprovar, Rejeitar, Editar
+                    </td>
+                </tr>
+                <tr>
+                    <td><span class="status-badge status-pending">Pendente Aprovação</span></td>
+                    <td>Plano aprovado pelo GDC, aguardando aprovação final do GO</td>
+                    <td>
+                        <strong>GDC:</strong> -<br>
+                        <strong>GO:</strong> Aprovar, Rejeitar, Editar
+                    </td>
+                </tr>
+                <tr>
+                    <td><span class="status-badge status-edited">Editado - Pendente Aprovação</span></td>
+                    <td>Plano editado pelo GDC/GO, aguardando aprovação final do GO</td>
+                    <td>
+                        <strong>GO:</strong> Aprovar, Rejeitar, Editar
+                    </td>
+                </tr>
+                <tr>
+                    <td><span class="status-badge status-approved">Aprovado (Confirmado)</span></td>
+                    <td>Plano aprovado por GDC e GO, agendado no calendário</td>
+                    <td>
+                        <strong>Prestador:</strong> Editar (volta para "Editado - Pendente Aprovação GDC")<br>
                         <strong>GO:</strong> Remover Aprovação
                     </td>
                 </tr>
                 <tr>
                     <td><span class="status-badge status-rejected">Rejeitado</span></td>
-                    <td>Plano rejeitado pelo GO com comentário</td>
+                    <td>Plano rejeitado pelo GDC ou GO com comentário</td>
                     <td>
-                        <strong>Prestador:</strong> Editar e resubmeter (volta para "Pendente Aprovação")
-                    </td>
-                </tr>
-                <tr>
-                    <td><span class="status-badge status-edited">Editado - Pendente Aprovação</span></td>
-                    <td>Plano anteriormente aprovado que foi editado e resubmetido</td>
-                    <td>
-                        <strong>Prestador:</strong> Editar<br>
-                        <strong>GO:</strong> Aprovar, Rejeitar
+                        <strong>Prestador:</strong> Editar e resubmeter (volta para "Pendente Aprovação GDC")
                     </td>
                 </tr>
             </tbody>
         </table>
 
-        <h3>3.2 Fluxo de Trabalho Principal</h3>
+        <div class="info-box">
+            <strong>Rastreabilidade de Alterações:</strong>
+            <p>Quando o GDC ou GO edita um plano, o sistema guarda:</p>
+            <ul>
+                <li><code>originalValues</code> - Valores originais antes da edição</li>
+                <li><code>editedBy</code> - Email de quem editou</li>
+                <li><code>editedAt</code> - Data/hora da edição</li>
+            </ul>
+            <p>Isto permite ao próximo aprovador ver exatamente o que foi alterado e por quem.</p>
+        </div>
+
+        <h3>3.2 Fluxo de Trabalho Principal (Duas Etapas)</h3>
         <ol>
             <li><strong>Criação:</strong> Prestador cria novo plano de trabalho</li>
             <li><strong>Adição de Atividades:</strong> Prestador adiciona uma ou mais atividades com períodos e detalhes</li>
             <li><strong>Preenchimento de Detalhes Diários:</strong> Para cada dia de cada atividade, prestador preenche horários e especificações</li>
-            <li><strong>Submissão:</strong> Prestador submete o plano (status: Pendente Aprovação)</li>
-            <li><strong>Revisão:</strong> GO revisa o plano na fila de aprovação</li>
-            <li><strong>Decisão:</strong>
+            <li><strong>Submissão:</strong> Prestador submete o plano (status: <span class="status-badge status-pending">Pendente Aprovação GDC</span>)</li>
+            <li><strong>1ª Revisão (GDC):</strong> Gestor de Contrato revisa o plano na sua fila de aprovação</li>
+            <li><strong>Decisão GDC:</strong>
                 <ul>
-                    <li><strong>Se Aprovar:</strong> Plano fica com status "Aprovado" e aparece no calendário</li>
-                    <li><strong>Se Rejeitar:</strong> Plano fica com status "Rejeitado" e prestador recebe comentário</li>
+                    <li><strong>Se Aprovar:</strong> Plano avança para GO (status: "Pendente Aprovação")</li>
+                    <li><strong>Se Rejeitar:</strong> Plano volta para prestador (status: "Rejeitado" com comentarioGDC)</li>
+                    <li><strong>Se Editar:</strong> GDC pode fazer alterações e depois aprovar/rejeitar</li>
                 </ul>
             </li>
-            <li><strong>Pós-Aprovação:</strong>
+            <li><strong>2ª Revisão (GO):</strong> Gestor Operacional revisa o plano na sua fila de aprovação</li>
+            <li><strong>Decisão GO:</strong>
                 <ul>
-                    <li>Prestador pode editar plano aprovado (volta para "Editado - Pendente Aprovação")</li>
-                    <li>GO pode remover aprovação (volta para "Pendente Aprovação")</li>
+                    <li><strong>Se Aprovar:</strong> Plano fica com status "Aprovado" e aparece no calendário</li>
+                    <li><strong>Se Rejeitar:</strong> Plano volta para prestador (status: "Rejeitado" com comentarioGO)</li>
+                    <li><strong>Se Editar:</strong> GO pode fazer alterações e depois aprovar/rejeitar</li>
+                </ul>
+            </li>
+            <li><strong>Pós-Aprovação Final:</strong>
+                <ul>
+                    <li>Prestador pode editar plano aprovado (volta para "Editado - Pendente Aprovação GDC" - reinicia fluxo)</li>
+                    <li>GO pode remover aprovação (volta para "Pendente Aprovação" - sua própria fila)</li>
                 </ul>
             </li>
         </ol>
 
-        <h3>3.3 Fluxo de Edição de Plano Aprovado</h3>
+        <div class="warning-box">
+            <strong>Nota sobre Rejeição:</strong> Quando um plano é rejeitado (seja pelo GDC ou GO), ele volta sempre para o prestador com status "Rejeitado". O prestador verá o comentário de quem rejeitou (comentarioGDC ou comentarioGO) e poderá editar e resubmeter, reiniciando o fluxo desde a 1ª etapa (GDC).
+        </div>
+
+        <h3>3.3 Fluxo de Edição de Plano Aprovado (pelo Prestador)</h3>
         <ol>
             <li>Prestador clica em "Editar" num plano com status "Aprovado"</li>
             <li>Sistema carrega todos os dados do plano no formulário</li>
             <li>Sistema marca internamente que está a editar um plano aprovado (<code>isEditingApprovedPlan = true</code>)</li>
             <li>Prestador faz as alterações necessárias</li>
             <li>Prestador clica em "Submeter Plano de Trabalho"</li>
-            <li>Sistema muda o status para "Editado - Pendente Aprovação"</li>
-            <li>Plano aparece na fila de aprovação do GO para nova revisão</li>
-            <li>GO aprova ou rejeita o plano editado</li>
+            <li>Sistema muda o status para "Editado - Pendente Aprovação GDC"</li>
+            <li>Plano aparece na fila de aprovação do GDC para nova revisão (reinicia o fluxo)</li>
+            <li>GDC aprova ou rejeita → se aprovado, vai para GO → GO aprova ou rejeita</li>
+        </ol>
+
+        <h3>3.4 Fluxo de Edição por GDC ou GO</h3>
+        <ol>
+            <li>GDC/GO acede à sua fila de aprovação</li>
+            <li>Clica em "Ver Detalhes" e depois "Editar" num plano pendente</li>
+            <li>Sistema guarda os valores originais em <code>originalValues</code></li>
+            <li>Sistema regista quem está a editar (<code>editedBy</code>) e quando (<code>editedAt</code>)</li>
+            <li>GDC/GO faz as alterações necessárias</li>
+            <li>Sistema mantém o status atual (não reinicia o fluxo)</li>
+            <li>Campos alterados são destacados em amarelo para o próximo aprovador</li>
+            <li>GDC/GO pode então aprovar ou rejeitar o plano editado</li>
         </ol>
     </div>
 
@@ -538,6 +671,26 @@
                     <td>isInISistema</td>
                     <td>boolean</td>
                     <td>Indica se o plano está no sistema I</td>
+                </tr>
+                <tr>
+                    <td>comentarioGDC</td>
+                    <td>string (opcional)</td>
+                    <td>Comentário do Gestor de Contrato (rejeição)</td>
+                </tr>
+                <tr>
+                    <td>editedBy</td>
+                    <td>string (opcional)</td>
+                    <td>Email do utilizador que editou o plano (GDC ou GO)</td>
+                </tr>
+                <tr>
+                    <td>editedAt</td>
+                    <td>string (opcional)</td>
+                    <td>Data/hora da última edição por GDC ou GO (formato ISO)</td>
+                </tr>
+                <tr>
+                    <td>originalValues</td>
+                    <td>Partial&lt;SubmittedPlan&gt; (opcional)</td>
+                    <td>Valores originais do plano antes de edição por GDC/GO, para destacar alterações</td>
                 </tr>
             </tbody>
         </table>
@@ -724,6 +877,7 @@
                 <tr>
                     <th>Ação</th>
                     <th>Prestador</th>
+                    <th>GDC</th>
                     <th>GO</th>
                     <th>CCO</th>
                     <th>Admin</th>
@@ -736,6 +890,7 @@
                     <td>✗</td>
                     <td>✗</td>
                     <td>✗</td>
+                    <td>✗</td>
                 </tr>
                 <tr>
                     <td>Editar Plano Próprio</td>
@@ -743,23 +898,51 @@
                     <td>✗</td>
                     <td>✗</td>
                     <td>✗</td>
+                    <td>✗</td>
                 </tr>
                 <tr>
-                    <td>Aprovar Plano</td>
+                    <td>Aprovar Plano (1ª Etapa - GDC)</td>
+                    <td>✗</td>
+                    <td>✓</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                </tr>
+                <tr>
+                    <td>Aprovar Plano (2ª Etapa - GO)</td>
+                    <td>✗</td>
                     <td>✗</td>
                     <td>✓</td>
                     <td>✗</td>
                     <td>✗</td>
                 </tr>
                 <tr>
-                    <td>Rejeitar Plano</td>
+                    <td>Rejeitar Plano (GDC)</td>
                     <td>✗</td>
                     <td>✓</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                </tr>
+                <tr>
+                    <td>Rejeitar Plano (GO)</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                    <td>✓</td>
+                    <td>✗</td>
+                    <td>✗</td>
+                </tr>
+                <tr>
+                    <td>Editar Plano Pendente</td>
+                    <td>✗</td>
+                    <td>✓ (pendente GDC)</td>
+                    <td>✓ (pendente GO)</td>
                     <td>✗</td>
                     <td>✗</td>
                 </tr>
                 <tr>
                     <td>Remover Aprovação</td>
+                    <td>✗</td>
                     <td>✗</td>
                     <td>✓</td>
                     <td>✗</td>
@@ -768,12 +951,14 @@
                 <tr>
                     <td>Ver Calendário</td>
                     <td>✗</td>
+                    <td>✗</td>
                     <td>✓</td>
                     <td>✗</td>
                     <td>✗</td>
                 </tr>
                 <tr>
                     <td>Ver Dashboard CCO</td>
+                    <td>✗</td>
                     <td>✗</td>
                     <td>✗</td>
                     <td>✓</td>
@@ -1136,12 +1321,20 @@
                     <td>Segmento específico de uma autoestrada delimitado por dois pontos quilométricos</td>
                 </tr>
                 <tr>
+                    <td>GDC (Gestor de Contrato)</td>
+                    <td>Utilizador responsável pela primeira etapa de aprovação de planos de trabalho. Revisa e aprova/rejeita planos submetidos pelo prestador antes de encaminhar para o GO.</td>
+                </tr>
+                <tr>
                     <td>GO (Gestor Operacional)</td>
-                    <td>Utilizador responsável por aprovar ou rejeitar planos de trabalho</td>
+                    <td>Utilizador responsável pela segunda etapa (final) de aprovação de planos de trabalho. Também pode remover aprovações de planos já aprovados.</td>
                 </tr>
                 <tr>
                     <td>CCO (Coordenador de Operações)</td>
-                    <td>Utilizador com acesso a dashboards e relatórios gerenciais</td>
+                    <td>Utilizador com acesso a dashboards, visão semanal de planos e relatórios gerenciais para monitorização.</td>
+                </tr>
+                <tr>
+                    <td>Fluxo de Aprovação em Duas Etapas</td>
+                    <td>Processo em que um plano passa por duas aprovações: primeiro pelo GDC, depois pelo GO, antes de ser efetivamente aprovado.</td>
                 </tr>
                 <tr>
                     <td>Perfil</td>
@@ -1181,6 +1374,7 @@
                     <th>Perfil</th>
                     <th>Email</th>
                     <th>Password</th>
+                    <th>Função no Fluxo</th>
                 </tr>
             </thead>
             <tbody>
@@ -1188,21 +1382,31 @@
                     <td>Prestador de Serviços</td>
                     <td>prestador@teste.pt</td>
                     <td>(qualquer)</td>
+                    <td>Cria e submete planos</td>
                 </tr>
                 <tr>
-                    <td>Gestor Operacional</td>
+                    <td>Gestor de Contrato (GDC)</td>
+                    <td>gestordecontrato@teste.pt</td>
+                    <td>(qualquer)</td>
+                    <td>1ª Aprovação</td>
+                </tr>
+                <tr>
+                    <td>Gestor Operacional (GO)</td>
                     <td>go@teste.pt</td>
                     <td>(qualquer)</td>
+                    <td>2ª Aprovação (Final)</td>
                 </tr>
                 <tr>
-                    <td>Coordenador de Operações</td>
+                    <td>Coordenador de Operações (CCO)</td>
                     <td>cco@teste.pt</td>
                     <td>(qualquer)</td>
+                    <td>Monitorização</td>
                 </tr>
                 <tr>
                     <td>Administrador</td>
                     <td>admin@teste.pt</td>
                     <td>(qualquer)</td>
+                    <td>Gestão do Sistema</td>
                 </tr>
             </tbody>
         </table>
@@ -1218,17 +1422,52 @@
         <p><code>dd/MM/yyyy</code> (ex: 22/10/2025)</p>
 
         <h3>13.3 Códigos de Status</h3>
-        <ul>
-            <li><code>Pendente Aprovação</code> - Plano aguardando aprovação inicial</li>
-            <li><code>Confirmado</code> - Plano aprovado (internamente chamado "Aprovado" na UI)</li>
-            <li><code>Rejeitado</code> - Plano rejeitado pelo GO</li>
-            <li><code>Editado - Pendente Aprovação</code> - Plano aprovado que foi editado e aguarda nova aprovação</li>
-        </ul>
+        <table>
+            <thead>
+                <tr>
+                    <th>Código</th>
+                    <th>Descrição</th>
+                    <th>Próximo Passo</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>Pendente Aprovação GDC</code></td>
+                    <td>Plano submetido aguardando 1ª aprovação pelo GDC</td>
+                    <td>GDC aprova → vai para GO</td>
+                </tr>
+                <tr>
+                    <td><code>Editado - Pendente Aprovação GDC</code></td>
+                    <td>Plano aprovado que foi editado pelo prestador e aguarda GDC</td>
+                    <td>GDC aprova → vai para GO</td>
+                </tr>
+                <tr>
+                    <td><code>Pendente Aprovação</code></td>
+                    <td>Plano aprovado pelo GDC aguardando 2ª aprovação pelo GO</td>
+                    <td>GO aprova → Confirmado</td>
+                </tr>
+                <tr>
+                    <td><code>Editado - Pendente Aprovação</code></td>
+                    <td>Plano editado pelo GDC/GO aguardando aprovação do GO</td>
+                    <td>GO aprova → Confirmado</td>
+                </tr>
+                <tr>
+                    <td><code>Confirmado</code></td>
+                    <td>Plano totalmente aprovado (UI mostra "Aprovado")</td>
+                    <td>Aparece no calendário</td>
+                </tr>
+                <tr>
+                    <td><code>Rejeitado</code></td>
+                    <td>Plano rejeitado pelo GDC ou GO</td>
+                    <td>Prestador edita e resubmete</td>
+                </tr>
+            </tbody>
+        </table>
     </div>
-
+    
     <div class="info-box" style="margin-top: 40px;">
-        <strong>Fim do Documento</strong><br>
-        Este documento descreve as funcionalidades e especificações do Portal de Agendamento de Planos de Trabalho na sua versão atual. Para questões ou esclarecimentos adicionais, contacte a equipa de desenvolvimento.
+        <strong>Fim do Documento - Versão 2.0</strong><br>
+        Este documento descreve as funcionalidades e especificações do Portal de Agendamento de Planos de Trabalho com o fluxo de aprovação em duas etapas (GDC → GO). Para questões ou esclarecimentos adicionais, contacte a equipa de desenvolvimento.
     </div>
 
 </body>
